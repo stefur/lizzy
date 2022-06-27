@@ -1,0 +1,7 @@
+[package]
+name = "lystra"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dbus = "0.9.5"
