@@ -15,6 +15,12 @@ struct NameOwnerChanged {
     new_name: String,
 }
 
+struct Song {
+    artist: String,
+    title: String,
+    playbackstatus: String,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let conn = LocalConnection::new_session().expect("D-Bus connection failed!");
 
@@ -81,28 +87,58 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) {
     let sender = msg.sender().unwrap().to_string();
 
     if spotify_id == sender {
-        get_playbackstatus(conn).expect("Failed to poll the playback status.");
-        unpack_message(msg).expect("Failed to unpack the message");
-        execute_update("This is a test!".to_string()).expect("Execution of IPC command failed.");
+        let now_playing: Song = unpack_message(&conn, &msg).expect("Failed to unpack the message.");
+        execute_update(now_playing.playbackstatus + ": " + &now_playing.artist + " - " + &now_playing.title).expect("Execution of IPC command failed.");
     }
 }
 
-fn unpack_message(msg: &Message) -> Result<(), Box<dyn std::error::Error>> {
+fn unpack_message(conn: &LocalConnection, msg: &Message) -> Result<Song, Box<dyn std::error::Error>> {
     let read_msg: Result<(String, dbus::arg::PropMap), TypeMismatchError> = msg.read2();
 
-    let metadata: &dyn RefArg = &read_msg.unwrap().1["Metadata"].0;
-    let map: &arg::PropMap = arg::cast(metadata).unwrap();
+    let map = &read_msg.unwrap().1;
 
-    let title: Option<&String> = arg::prop_cast(&map, "xesam:title");
-    let artist: Option<&Vec<String>> = arg::prop_cast(&map, "xesam:artist");
+    let contents = map.keys().nth(0).unwrap().as_str();
 
-    println!("Artist: {:?}, Title: {:?}", artist.unwrap()[0], title.unwrap());
+    match contents {
+        "Metadata" => {
+            let metadata: &dyn RefArg = &map["Metadata"].0;
+            let map: &arg::PropMap = arg::cast(metadata).unwrap();
+            let song_title: Option<&String> = arg::prop_cast(&map, "xesam:title");
+            let song_artist: Option<&Vec<String>> = arg::prop_cast(&map, "xesam:artist");
+            let song_playbackstatus: String = get_playbackstatus(&conn).unwrap().to_string();
 
-    Ok(())
+            println!("Artist: {:?}, Title: {:?}", song_artist.unwrap()[0], song_title.unwrap());
+            println!("{:?}", song_playbackstatus);
+
+            Ok(Song {
+                artist: song_artist.unwrap()[0].to_string(),
+                title: song_title.unwrap().to_string(),
+                playbackstatus: song_playbackstatus,
+            })
+        }
+        "PlaybackStatus" => {
+            let song_playbackstatus: String = map["PlaybackStatus"].0.as_str().unwrap().to_string();
+            let song_metadata: (String, String) = get_metadata(&conn).unwrap();
+            let song_artist: String = song_metadata.0;
+            let song_title: String = song_metadata.1;
+
+            println!("Artist: {:?}, Title: {:?}", song_artist, song_title);
+            println!("{:?}", song_playbackstatus);
+
+            Ok(Song {
+                artist: song_artist,
+                title: song_title,
+                playbackstatus: song_playbackstatus,
+            })
+        }
+        _ => {
+            panic!("Unable to unpack: {:?}", contents);
+        }
+    }
 
 }
 
-fn get_metadata(conn: &LocalConnection) -> Result<(), Box<dyn std::error::Error>> {
+fn get_metadata(conn: &LocalConnection) -> Result<(String, String), Box<dyn std::error::Error>> {
     let proxy = conn.with_proxy(
         "org.mpris.MediaPlayer2.spotify",
         "/org/mpris/MediaPlayer2",
@@ -113,15 +149,14 @@ fn get_metadata(conn: &LocalConnection) -> Result<(), Box<dyn std::error::Error>
     let title: Option<&String> = arg::prop_cast(&metadata, "xesam:title");
     let artist: Option<&Vec<String>> = arg::prop_cast(&metadata, "xesam:artist");
 
-    println!("The artist is: {:?}", artist);
-    println!("The title is: {:?}", title);
+    let result = (artist.unwrap()[0].to_string(), title.unwrap().to_string());
 
-    Ok(())
+    Ok(result)
 }
 
 fn get_playbackstatus(
     conn: &LocalConnection,
-) -> Result<Box<dyn arg::RefArg>, Box<dyn std::error::Error>> {
+) -> Result<String, Box<dyn std::error::Error>> {
     let proxy = conn.with_proxy(
         "org.mpris.MediaPlayer2.spotify",
         "/org/mpris/MediaPlayer2",
@@ -131,7 +166,9 @@ fn get_playbackstatus(
     let playbackstatus: Box<dyn arg::RefArg> =
         proxy.get("org.mpris.MediaPlayer2.Player", "PlaybackStatus")?;
 
-    Ok(playbackstatus)
+    let result = playbackstatus.as_str().unwrap().to_string();
+
+    Ok(result)
 }
 
 fn execute_update(text: String) -> Result<(), Box<dyn std::error::Error>> {
