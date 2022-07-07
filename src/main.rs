@@ -11,7 +11,7 @@ use dbus::{arg, blocking::LocalConnection};
 
 struct NameOwnerChanged {
     name: String,
-    old_name: String,
+    _old_name: String,
     new_name: String,
 }
 
@@ -66,7 +66,7 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
     let mut iter = msg.iter_init();
     Ok(NameOwnerChanged {
         name: iter.read()?,
-        old_name: iter.read()?,
+        _old_name: iter.read()?,
         new_name: iter.read()?,
     })
 }
@@ -81,12 +81,14 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) {
     let sender = msg.sender().unwrap().to_string();
 
     if spotify_id == sender {
-        let now_playing: Song = unpack_message(&conn, &msg).expect("Failed to unpack the message.");
-        execute_update(now_playing.playbackstatus + ": " + &now_playing.artist + " - " + &now_playing.title).expect("Execution of IPC command failed.");
+        let now_playing: Option<Song> = unpack_message(&conn, &msg).expect("Failed to unpack the message.");
+        if let Some(song) = now_playing {
+            execute_update(song.playbackstatus + ": " + &song.artist + " - " + &song.title).expect("Execution of IPC command failed.");
+        }
     }
 }
 
-fn unpack_message(conn: &LocalConnection, msg: &Message) -> Result<Song, Box<dyn std::error::Error>> {
+fn unpack_message(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Box<dyn std::error::Error>> {
     let read_msg: Result<(String, dbus::arg::PropMap), TypeMismatchError> = msg.read2();
 
     let map = &read_msg.unwrap().1;
@@ -101,11 +103,11 @@ fn unpack_message(conn: &LocalConnection, msg: &Message) -> Result<Song, Box<dyn
             let song_artist: Option<&Vec<String>> = arg::prop_cast(&map, "xesam:artist");
             let song_playbackstatus: String = get_playbackstatus(&conn).unwrap().to_string();
 
-            Ok(Song {
+            Ok(Some(Song {
                 artist: song_artist.unwrap()[0].to_string(),
                 title: song_title.unwrap().to_string(),
                 playbackstatus: song_playbackstatus,
-            })
+            }))
         }
         "PlaybackStatus" => {
             let song_playbackstatus: String = map["PlaybackStatus"].0.as_str().unwrap().to_string();
@@ -113,14 +115,14 @@ fn unpack_message(conn: &LocalConnection, msg: &Message) -> Result<Song, Box<dyn
             let song_artist: String = song_metadata.0;
             let song_title: String = song_metadata.1;
 
-            Ok(Song {
+            Ok(Some(Song {
                 artist: song_artist,
                 title: song_title,
                 playbackstatus: song_playbackstatus,
-            })
+            }))
         }
         _ => {
-            panic!("Unable to unpack: {:?}", contents);
+            Ok(None)
         }
     }
 
