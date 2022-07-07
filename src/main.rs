@@ -2,7 +2,7 @@ use std::error::Error;
 use std::process::Command;
 use std::time::Duration;
 
-use dbus::arg::TypeMismatchError;
+use dbus::arg::{TypeMismatchError, RefArg};
 use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
 use dbus::message::MatchRule;
 use dbus::Message;
@@ -82,18 +82,24 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) {
 
     if spotify_id == sender {
         get_playbackstatus(conn).expect("Failed to poll the playback status.");
-        unpack_message(msg);
+        unpack_message(msg).expect("Failed to unpack the message");
         execute_update("This is a test!".to_string()).expect("Execution of IPC command failed.");
-        //println!("Got message: {:?}", msg);
-        println!("From here we should update the string output");
     }
 }
 
-fn unpack_message(msg: &Message) {
-    let iter = msg.iter_init();
-    for i in iter {
-        println!("{:?}", i);
-    }
+fn unpack_message(msg: &Message) -> Result<(), Box<dyn std::error::Error>> {
+    let read_msg: Result<(String, dbus::arg::PropMap), TypeMismatchError> = msg.read2();
+
+    let metadata: &dyn RefArg = &read_msg.unwrap().1["Metadata"].0;
+    let map: &arg::PropMap = arg::cast(metadata).unwrap();
+
+    let title: Option<&String> = arg::prop_cast(&map, "xesam:title");
+    let artist: Option<&Vec<String>> = arg::prop_cast(&map, "xesam:artist");
+
+    println!("Artist: {:?}, Title: {:?}", artist.unwrap()[0], title.unwrap());
+
+    Ok(())
+
 }
 
 fn get_metadata(conn: &LocalConnection) -> Result<(), Box<dyn std::error::Error>> {
