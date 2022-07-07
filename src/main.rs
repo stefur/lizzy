@@ -57,14 +57,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn handle_nameowner(msg: &Message) {
     let nameowner = read_nameowner(msg).unwrap();
 
-    if nameowner.name == "org.mpris.MediaPlayer2.spotify" {
-        if nameowner.old_name == "" {
-            println!("Spotify opened. Probably not need to do anything here.")
-        }
-
-        if nameowner.new_name == "" {
-            println!("Spotify closed. Now we should clear the output.")
-        }
+    if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name == "" {
+        execute_update("".to_string()).expect("Execution of IPC command failed.");
     }
 }
 
@@ -107,9 +101,6 @@ fn unpack_message(conn: &LocalConnection, msg: &Message) -> Result<Song, Box<dyn
             let song_artist: Option<&Vec<String>> = arg::prop_cast(&map, "xesam:artist");
             let song_playbackstatus: String = get_playbackstatus(&conn).unwrap().to_string();
 
-            println!("Artist: {:?}, Title: {:?}", song_artist.unwrap()[0], song_title.unwrap());
-            println!("{:?}", song_playbackstatus);
-
             Ok(Song {
                 artist: song_artist.unwrap()[0].to_string(),
                 title: song_title.unwrap().to_string(),
@@ -121,9 +112,6 @@ fn unpack_message(conn: &LocalConnection, msg: &Message) -> Result<Song, Box<dyn
             let song_metadata: (String, String) = get_metadata(&conn).unwrap();
             let song_artist: String = song_metadata.0;
             let song_title: String = song_metadata.1;
-
-            println!("Artist: {:?}, Title: {:?}", song_artist, song_title);
-            println!("{:?}", song_playbackstatus);
 
             Ok(Song {
                 artist: song_artist,
