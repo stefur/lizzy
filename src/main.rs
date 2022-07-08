@@ -162,7 +162,7 @@ fn get_playbackstatus(
 }
 
 fn execute_update(text: String) -> Result<(), Box<dyn std::error::Error>> {
-    let _cmd = Command::new("polybar-msg")
+    Command::new("polybar-msg")
         .arg("action")
         .arg("spotify.send")
         .arg(text)
