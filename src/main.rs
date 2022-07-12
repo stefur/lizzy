@@ -2,7 +2,7 @@ use std::error::Error;
 use std::process::Command;
 use std::time::Duration;
 
-use dbus::arg::{TypeMismatchError, RefArg};
+use dbus::arg::{RefArg, TypeMismatchError};
 use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
 use dbus::message::MatchRule;
 use dbus::Message;
@@ -71,6 +71,22 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
     })
 }
 
+fn truncate_output(text: &mut String) -> String {
+    if text.len() > 50 {
+        text.truncate(50);
+
+        let mut result: String = format!("{}{}", text, "…");
+
+        if result.contains("(") && !result.contains(")") {
+            result = format!("{}{}", result, ")")
+        }
+
+        return result;
+    } else {
+        return text.to_string();
+    }
+}
+
 fn handle_properties(conn: &LocalConnection, msg: &Message) {
     if get_spotify_id(&conn).is_err() {
         return;
@@ -81,14 +97,23 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) {
     let sender = msg.sender().unwrap().to_string();
 
     if spotify_id == sender {
-        let now_playing: Option<Song> = unpack_message(&conn, &msg).expect("Failed to unpack the message.");
+        let now_playing: Option<Song> =
+            unpack_message(&conn, &msg).expect("Failed to unpack the message.");
         if let Some(song) = now_playing {
-            execute_update(song.playbackstatus + ": " + &song.artist + " - " + &song.title).expect("Execution of IPC command failed.");
+            let mut constructed_text: String =
+                song.playbackstatus + ": " + &song.artist + " - " + &song.title;
+
+            let output = truncate_output(&mut constructed_text);
+
+            execute_update(output).expect("Execution of IPC command failed.");
         }
     }
 }
 
-fn unpack_message(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Box<dyn std::error::Error>> {
+fn unpack_message(
+    conn: &LocalConnection,
+    msg: &Message,
+) -> Result<Option<Song>, Box<dyn std::error::Error>> {
     let read_msg: Result<(String, dbus::arg::PropMap), TypeMismatchError> = msg.read2();
 
     let map = &read_msg.unwrap().1;
@@ -121,11 +146,8 @@ fn unpack_message(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>,
                 playbackstatus: song_playbackstatus,
             }))
         }
-        _ => {
-            Ok(None)
-        }
+        _ => Ok(None),
     }
-
 }
 
 fn get_metadata(conn: &LocalConnection) -> Result<(String, String), Box<dyn std::error::Error>> {
@@ -144,9 +166,7 @@ fn get_metadata(conn: &LocalConnection) -> Result<(String, String), Box<dyn std:
     Ok(result)
 }
 
-fn get_playbackstatus(
-    conn: &LocalConnection,
-) -> Result<String, Box<dyn std::error::Error>> {
+fn get_playbackstatus(conn: &LocalConnection) -> Result<String, Box<dyn std::error::Error>> {
     let proxy = conn.with_proxy(
         "org.mpris.MediaPlayer2.spotify",
         "/org/mpris/MediaPlayer2",
