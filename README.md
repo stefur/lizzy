@@ -18,7 +18,7 @@ The main goal of this application is for me to explore and learn a bit of Rust, 
 4. The resulting binary can be found in `lystra/target/release/`. Place it somewhere on your `PATH`, such as `.local/bin`.
 
 ## Configure Waybar
-1. Add the following custom module to your Polybar config:
+1. Add the following custom module to your Waybar config:
     ```
     "custom/spotify": {
         "interval": "once",
