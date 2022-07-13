@@ -91,7 +91,7 @@ fn truncate_output(text: &mut String) -> String {
 }
 
 fn escape_ampersand(text: &mut String) -> String {
-    let result = str::replace(&text, "&", "&amp");
+    let result = str::replace(&text, "&", "&amp;");
     result
 }
 
