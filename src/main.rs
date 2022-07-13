@@ -1,4 +1,6 @@
 use std::error::Error;
+use std::fs::File;
+use std::io::prelude::*;
 use std::process::Command;
 use std::time::Duration;
 
@@ -58,7 +60,8 @@ fn handle_nameowner(msg: &Message) {
     let nameowner = read_nameowner(msg).unwrap();
 
     if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name == "" {
-        execute_update("".to_string()).expect("Execution of IPC command failed.");
+        write_to_file("".to_string()).expect("Failed to send a blank string to Waybar.");
+        send_signal().expect("Failed to send update signal to Waybar.");
     }
 }
 
@@ -105,9 +108,17 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) {
 
             let output = truncate_output(&mut constructed_text);
 
-            execute_update(output).expect("Execution of IPC command failed.");
+            write_to_file(output).expect("Failed to write to file.");
+            send_signal().expect("Failed to send update signal to Waybar.");
         }
     }
+}
+
+fn write_to_file(text: String) -> std::io::Result<()> {
+    let text = text.as_bytes();
+    let mut file = File::create("/tmp/lystra_output.txt")?;
+    file.write_all(text)?;
+    Ok(())
 }
 
 fn unpack_message(
@@ -181,11 +192,10 @@ fn get_playbackstatus(conn: &LocalConnection) -> Result<String, Box<dyn std::err
     Ok(result)
 }
 
-fn execute_update(text: String) -> Result<(), Box<dyn std::error::Error>> {
-    Command::new("polybar-msg")
-        .arg("action")
-        .arg("spotify.send")
-        .arg(text)
+fn send_signal() -> Result<(), Box<dyn std::error::Error>> {
+    Command::new("pkill")
+        .arg("-RTMIN+8")
+        .arg("waybar")
         .output()
         .expect("Failed to execute update");
     Ok(())
