@@ -90,9 +90,14 @@ fn truncate_output(text: &mut String) -> String {
     }
 }
 
+fn escape_ampersand(text: &mut String) -> String {
+    let result = str::replace(&text, "&", "&amp");
+    result
+}
+
 fn handle_properties(conn: &LocalConnection, msg: &Message) {
     if get_spotify_id(&conn).is_err() {
-        return;
+        ();
     }
 
     let spotify_id = get_spotify_id(&conn).unwrap().to_string();
@@ -102,13 +107,24 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) {
     if spotify_id == sender {
         let now_playing: Option<Song> =
             unpack_message(&conn, &msg).expect("Failed to unpack the message.");
-        if let Some(song) = now_playing {
+        if let Some(mut song) = now_playing {
+            match song.playbackstatus.as_str() {
+                "Playing" => {
+                    song.playbackstatus = "".to_string();
+                }
+                "Paused" => {
+                    song.playbackstatus = "Paused:".to_string();
+                }
+                &_ => (),
+            }
+
             let mut constructed_text: String =
-                song.playbackstatus + ": " + &song.artist + " - " + &song.title;
+                song.playbackstatus + " " + &song.artist + " - " + &song.title;
 
-            let output = truncate_output(&mut constructed_text);
+            truncate_output(&mut constructed_text);
+            escape_ampersand(&mut constructed_text);
 
-            write_to_file(output).expect("Failed to write to file.");
+            write_to_file(constructed_text).expect("Failed to write to file.");
             send_signal().expect("Failed to send update signal to Waybar.");
         }
     }
@@ -197,7 +213,7 @@ fn send_signal() -> Result<(), Box<dyn std::error::Error>> {
         .arg("-RTMIN+8")
         .arg("waybar")
         .output()
-        .expect("Failed to execute update");
+        .expect("Failed to send update signal to Waybar.");
     Ok(())
 }
 
