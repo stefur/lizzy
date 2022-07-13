@@ -113,18 +113,18 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) {
                     song.playbackstatus = "".to_string();
                 }
                 "Paused" => {
-                    song.playbackstatus = "Paused:".to_string();
+                    song.playbackstatus = "Paused: ".to_string();
                 }
                 &_ => (),
             }
 
-            let mut constructed_text: String =
-                song.playbackstatus + " " + &song.artist + " - " + &song.title;
+            let mut artist_song: String = song.artist + " - " + &song.title;
 
-            let mut output = truncate_output(&mut constructed_text);
+            let mut output = truncate_output(&mut artist_song);
             output = escape_ampersand(&mut output);
 
-            write_to_file(output).expect("Failed to write to file.");
+            write_to_file(format!("{}{}", song.playbackstatus, output))
+                .expect("Failed to write to file.");
             send_signal().expect("Failed to send update signal to Waybar.");
         }
     }
