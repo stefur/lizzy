@@ -121,10 +121,10 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) {
             let mut constructed_text: String =
                 song.playbackstatus + " " + &song.artist + " - " + &song.title;
 
-            truncate_output(&mut constructed_text);
-            escape_ampersand(&mut constructed_text);
+            let mut output = truncate_output(&mut constructed_text);
+            output = escape_ampersand(&mut output);
 
-            write_to_file(constructed_text).expect("Failed to write to file.");
+            write_to_file(output).expect("Failed to write to file.");
             send_signal().expect("Failed to send update signal to Waybar.");
         }
     }
