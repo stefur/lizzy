@@ -4,7 +4,7 @@ use std::io::prelude::*;
 use std::process::Command;
 use std::time::Duration;
 
-use dbus::arg::{RefArg, TypeMismatchError};
+use dbus::arg::{RefArg, TypeMismatchError, PropMap, Iter};
 use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
 use dbus::message::MatchRule;
 use dbus::Message;
@@ -40,33 +40,34 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_type(Signal);
 
     conn.add_match(properties_rule, |_: (), conn, msg| {
-        handle_properties(&conn, &msg);
+        handle_properties(&conn, &msg).expect("Failed to handle properties.");
         true
     })
     .expect("Adding properties_rule failed!");
 
     conn.add_match(nameowner_rule, |_: (), _, msg| {
-        handle_nameowner(&msg);
+        handle_nameowner(&msg).expect("Failed to handle nameowner.");
         true
     })
-    .expect("Adding properties_rule failed!");
+    .expect("Adding nameowner_rule failed!");
 
     loop {
         conn.process(Duration::from_millis(1000)).unwrap();
     }
 }
 
-fn handle_nameowner(msg: &Message) {
-    let nameowner = read_nameowner(msg).unwrap();
+fn handle_nameowner(msg: &Message) -> Result<(), Box<dyn Error>> {
+    let nameowner: NameOwnerChanged = read_nameowner(msg).unwrap();
 
     if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name == "" {
         write_to_file("".to_string()).expect("Failed to send a blank string to Waybar.");
         send_signal().expect("Failed to send update signal to Waybar.");
     }
+    Ok(())
 }
 
 fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> {
-    let mut iter = msg.iter_init();
+    let mut iter: Iter = msg.iter_init();
     Ok(NameOwnerChanged {
         name: iter.read()?,
         _old_name: iter.read()?,
@@ -95,7 +96,7 @@ fn escape_ampersand(text: &mut String) -> String {
     result
 }
 
-fn handle_properties(conn: &LocalConnection, msg: &Message) {
+fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<(), Box<dyn Error>> {
     if get_spotify_id(&conn).is_err() {
         ();
     }
@@ -109,13 +110,9 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) {
             unpack_message(&conn, &msg).expect("Failed to unpack the message.");
         if let Some(mut song) = now_playing {
             match song.playbackstatus.as_str() {
-                "Playing" => {
-                    song.playbackstatus = "".to_string();
-                }
-                "Paused" => {
-                    song.playbackstatus = "Paused: ".to_string();
-                }
-                &_ => (),
+                "Playing" => song.playbackstatus = "".to_string(),
+                "Paused" => song.playbackstatus = "Paused: ".to_string(),
+                &_ => ()
             }
 
             let mut artist_song: String = song.artist + " - " + &song.title;
@@ -128,11 +125,12 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) {
             send_signal().expect("Failed to send update signal to Waybar.");
         }
     }
+    Ok(())
 }
 
-fn write_to_file(text: String) -> std::io::Result<()> {
-    let text = text.as_bytes();
-    let mut file = File::create("/tmp/lystra_output.txt")?;
+fn write_to_file(text: String) -> Result<(), Box<dyn Error>> {
+    let text: &[u8] = text.as_bytes();
+    let mut file: File = File::create("/tmp/lystra_output.txt")?;
     file.write_all(text)?;
     Ok(())
 }
@@ -140,8 +138,8 @@ fn write_to_file(text: String) -> std::io::Result<()> {
 fn unpack_message(
     conn: &LocalConnection,
     msg: &Message,
-) -> Result<Option<Song>, Box<dyn std::error::Error>> {
-    let read_msg: Result<(String, dbus::arg::PropMap), TypeMismatchError> = msg.read2();
+) -> Result<Option<Song>, Box<dyn Error>> {
+    let read_msg: Result<(String, PropMap), TypeMismatchError> = msg.read2();
 
     let map = &read_msg.unwrap().1;
 
@@ -177,14 +175,14 @@ fn unpack_message(
     }
 }
 
-fn get_metadata(conn: &LocalConnection) -> Result<(String, String), Box<dyn std::error::Error>> {
+fn get_metadata(conn: &LocalConnection) -> Result<(String, String), Box<dyn Error>> {
     let proxy = conn.with_proxy(
         "org.mpris.MediaPlayer2.spotify",
         "/org/mpris/MediaPlayer2",
         Duration::from_millis(5000),
     );
 
-    let metadata: arg::PropMap = proxy.get("org.mpris.MediaPlayer2.Player", "Metadata")?;
+    let metadata: PropMap = proxy.get("org.mpris.MediaPlayer2.Player", "Metadata")?;
     let title: Option<&String> = arg::prop_cast(&metadata, "xesam:title");
     let artist: Option<&Vec<String>> = arg::prop_cast(&metadata, "xesam:artist");
 
@@ -193,7 +191,7 @@ fn get_metadata(conn: &LocalConnection) -> Result<(String, String), Box<dyn std:
     Ok(result)
 }
 
-fn get_playbackstatus(conn: &LocalConnection) -> Result<String, Box<dyn std::error::Error>> {
+fn get_playbackstatus(conn: &LocalConnection) -> Result<String, Box<dyn Error>> {
     let proxy = conn.with_proxy(
         "org.mpris.MediaPlayer2.spotify",
         "/org/mpris/MediaPlayer2",
@@ -208,7 +206,7 @@ fn get_playbackstatus(conn: &LocalConnection) -> Result<String, Box<dyn std::err
     Ok(result)
 }
 
-fn send_signal() -> Result<(), Box<dyn std::error::Error>> {
+fn send_signal() -> Result<(), Box<dyn Error>> {
     Command::new("pkill")
         .arg("-RTMIN+8")
         .arg("waybar")
@@ -217,7 +215,7 @@ fn send_signal() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn get_spotify_id(conn: &LocalConnection) -> Result<String, Box<dyn std::error::Error>> {
+fn get_spotify_id(conn: &LocalConnection) -> Result<String, Box<dyn Error>> {
     let proxy = conn.with_proxy("org.freedesktop.DBus", "/", Duration::from_millis(5000));
     let (spotify_id,): (String,) = proxy.method_call(
         "org.freedesktop.DBus",
