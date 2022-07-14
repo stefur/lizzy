@@ -31,7 +31,11 @@ The main goal of this application is for me to explore and learn a bit of Rust, 
 3. Add `lystra` to whatever autostart method you're using.
 4. Listen to music!
 
+## Configuration
+Currently the following flag can be used:
+- `-l`, `--length` is used to set the length of the string before truncating the text (adding …). Default: 40
+
 ## Todo
-- User configuration of output
+- More user configuration options of output
 - Better and more examples
 - Make a release?

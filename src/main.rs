@@ -11,6 +11,10 @@ use dbus::Message;
 use dbus::MessageType::Signal;
 use dbus::{arg, blocking::LocalConnection};
 
+use clap::{App, arg, Parser};
+
+mod args;
+
 struct NameOwnerChanged {
     name: String,
     _old_name: String,
@@ -24,6 +28,14 @@ struct Song {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+
+    let _matches = App::new("Lystra")
+    .about("A simple and small app to let Waybar display what is playing on Spotify.")
+    .arg(
+        arg!(-l --length <NUMBER> "Set max length of output. Default: 40")
+        .required(false)
+    ).get_matches();
+
     let conn = LocalConnection::new_session().expect("D-Bus connection failed!");
 
     let properties_rule = MatchRule::new()
@@ -75,9 +87,12 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
     })
 }
 
-fn truncate_output(text: &mut String) -> String {
-    if text.len() > 50 {
-        text.truncate(50);
+fn truncate_output(text: String) -> String {
+    let mut text: String = text;
+    let max_length: usize = args::Args::parse().length;
+
+    if text.len() > max_length {
+        text.truncate(max_length);
 
         let mut result: String = format!("{}{}", text, "…");
 
@@ -91,7 +106,7 @@ fn truncate_output(text: &mut String) -> String {
     }
 }
 
-fn escape_ampersand(text: &mut String) -> String {
+fn escape_ampersand(text: String) -> String {
     let result = str::replace(&text, "&", "&amp;");
     result
 }
@@ -115,12 +130,11 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<(), Box<dy
                 &_ => ()
             }
 
-            let mut artist_song: String = song.artist + " - " + &song.title;
+           let mut artist_song = song.artist + " - " + &song.title;
+            artist_song = truncate_output(artist_song);
+            artist_song = escape_ampersand(artist_song);
 
-            let mut output = truncate_output(&mut artist_song);
-            output = escape_ampersand(&mut output);
-
-            write_to_file(format!("{}{}", song.playbackstatus, output))
+            write_to_file(format!("{}{}", song.playbackstatus, artist_song))
                 .expect("Failed to write to file.");
             send_signal().expect("Failed to send update signal to Waybar.");
         }
