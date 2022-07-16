@@ -3,6 +3,12 @@ name = "lystra"
 version = "0.1.0"
 edition = "2021"
 
+[profile.release]
+strip = true # Automatically strip symbols from the binary.
+opt-level = "z"  # Optimize for size.
+lto = true # This can remove dead code and often times reduces binary size.
+codegen-units = 1 # Allow for maximum size reduction optimizations, but longer compile time.
+
 [dependencies]
 dbus = "0.9"
 clap = { version = "3.2", features = ["derive"] }
