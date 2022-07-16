@@ -4,14 +4,14 @@ use std::io::prelude::*;
 use std::process::Command;
 use std::time::Duration;
 
-use dbus::arg::{RefArg, TypeMismatchError, PropMap, Iter};
+use dbus::arg::{Iter, PropMap, RefArg, TypeMismatchError};
 use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
 use dbus::message::MatchRule;
 use dbus::Message;
 use dbus::MessageType::Signal;
 use dbus::{arg, blocking::LocalConnection};
 
-use clap::{App, arg, Parser};
+use clap::{arg, App, Parser};
 
 mod args;
 
@@ -28,13 +28,10 @@ struct Song {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-
-    let _matches = App::new("Lystra")
-    .about("A simple and small app to let Waybar display what is playing on Spotify.")
-    .arg(
-        arg!(-l --length <NUMBER> "Set max length of output. Default: 40")
-        .required(false)
-    ).get_matches();
+    App::new("Lystra")
+        .about("A simple and small app to let Waybar display what is playing on Spotify.")
+        .arg(arg!(-l --length <NUMBER> "Set max length of output. Default: 40").required(false))
+        .get_matches();
 
     let conn = LocalConnection::new_session().expect("D-Bus connection failed!");
 
@@ -92,7 +89,11 @@ fn truncate_output(text: String) -> String {
     let max_length: usize = args::Args::parse().length;
 
     if text.len() > max_length {
-        let upto = text.char_indices().map(|(i, _)| i).nth(max_length).unwrap_or(text.len());
+        let upto = text
+            .char_indices()
+            .map(|(i, _)| i)
+            .nth(max_length)
+            .unwrap_or(text.len());
         text.truncate(upto);
 
         let mut result: String = format!("{}{}", text, "…");
@@ -128,10 +129,10 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<(), Box<dy
             match song.playbackstatus.as_str() {
                 "Playing" => song.playbackstatus = "".to_string(),
                 "Paused" => song.playbackstatus = "Paused: ".to_string(),
-                &_ => ()
+                &_ => (),
             }
 
-           let mut artist_song = song.artist + " - " + &song.title;
+            let mut artist_song = song.artist + " - " + &song.title;
             artist_song = truncate_output(artist_song);
             artist_song = escape_ampersand(artist_song);
 
@@ -150,10 +151,7 @@ fn write_to_file(text: String) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn unpack_message(
-    conn: &LocalConnection,
-    msg: &Message,
-) -> Result<Option<Song>, Box<dyn Error>> {
+fn unpack_message(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Box<dyn Error>> {
     let read_msg: Result<(String, PropMap), TypeMismatchError> = msg.read2();
 
     let map = &read_msg.unwrap().1;
