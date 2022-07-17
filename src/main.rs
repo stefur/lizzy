@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fs::File;
-use std::io::prelude::*;
+use std::io::Write;
 use std::process::Command;
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use dbus::Message;
 use dbus::MessageType::Signal;
 use dbus::{arg, blocking::LocalConnection};
 
-use clap::{arg, App, Parser};
+use clap::{arg, Parser};
 
 mod args;
 
@@ -28,7 +28,7 @@ struct Song {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    App::new("Lystra")
+    clap::Command::new("Lystra")
         .about("A simple and small app to let Waybar display what is playing on Spotify.")
         .arg(arg!(-l --length <NUMBER> "Set max length of output. Default: 40").required(false))
         .get_matches();
@@ -61,12 +61,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     .expect("Adding nameowner_rule failed!");
 
     loop {
-        conn.process(Duration::from_millis(1000)).unwrap();
+        conn.process(Duration::from_millis(1000))
+            .expect("Failed to set up loop to handle messages.");
     }
 }
 
 fn handle_nameowner(msg: &Message) -> Result<(), Box<dyn Error>> {
-    let nameowner: NameOwnerChanged = read_nameowner(msg).unwrap();
+    let nameowner: NameOwnerChanged =
+        read_nameowner(msg).expect("Could not read the nameowner from incoming message.");
 
     if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name == "" {
         write_to_file("".to_string()).expect("Failed to send a blank string to Waybar.");
