@@ -120,9 +120,15 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<(), Box<dy
         ();
     }
 
-    let spotify_id = get_spotify_id(&conn);
+    let id = get_spotify_id(&conn);
+    let sender_id = msg.sender().unwrap().to_string();
 
-    if let Ok(_sender_id) = spotify_id {
+    if let Ok(spotify_id) = id {
+        
+        if spotify_id != sender_id {
+            return Ok(());
+        }
+
         let now_playing: Option<Song> =
             unpack_message(&conn, &msg).expect("Failed to unpack the message.");
         if let Some(mut song) = now_playing {
