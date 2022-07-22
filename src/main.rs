@@ -116,10 +116,7 @@ fn escape_ampersand(text: String) -> String {
 }
 
 fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<(), Box<dyn Error>> {
-    if get_spotify_id(&conn).is_err() {
-        ();
-    }
-
+  
     let id = get_spotify_id(&conn);
     let sender_id = msg.sender().unwrap().to_string();
 
