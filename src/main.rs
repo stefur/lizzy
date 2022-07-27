@@ -31,6 +31,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     clap::Command::new("Lystra")
         .about("A simple and small app to let Waybar display what is playing on Spotify.")
         .arg(arg!(-l --length <NUMBER> "Set max length of output. Default: 40").required(false))
+        .arg(
+            arg!(-s --signal <NUMBER> "Set signal number used to update Waybar. Default: 8")
+                .required(false),
+        )
         .get_matches();
 
     let conn = LocalConnection::new_session().expect("D-Bus connection failed!");
@@ -116,12 +120,10 @@ fn escape_ampersand(text: String) -> String {
 }
 
 fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<(), Box<dyn Error>> {
-  
     let id = get_spotify_id(&conn);
     let sender_id = msg.sender().unwrap().to_string();
 
     if let Ok(spotify_id) = id {
-        
         if spotify_id != sender_id {
             return Ok(());
         }
@@ -223,8 +225,10 @@ fn get_playbackstatus(conn: &LocalConnection) -> Result<String, Box<dyn Error>> 
 }
 
 fn send_signal() -> Result<(), Box<dyn Error>> {
+    let signal = format!("-RTMIN+{}", args::Args::parse().signal);
+
     Command::new("pkill")
-        .arg("-RTMIN+8")
+        .arg(signal)
         .arg("waybar")
         .output()
         .expect("Failed to send update signal to Waybar.");
