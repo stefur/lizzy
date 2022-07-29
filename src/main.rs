@@ -4,8 +4,7 @@ use std::io::Write;
 use std::process::Command;
 use std::time::Duration;
 
-use dbus::arg::{Iter, PropMap, RefArg, TypeMismatchError};
-use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
+use dbus::arg::{Iter, PropMap, RefArg, TypeMismatchError, Variant};
 use dbus::blocking::BlockingSender;
 use dbus::message::MatchRule;
 use dbus::Error as DBusError;
@@ -24,9 +23,9 @@ struct NameOwnerChanged {
 }
 
 struct Song {
-    artist: String,
-    title: String,
-    playbackstatus: String,
+    artist: Option<String>,
+    title: Option<String>,
+    playbackstatus: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -78,7 +77,7 @@ fn handle_nameowner(msg: &Message) -> Result<(), Box<dyn Error>> {
 
     if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name == "" {
         write_to_file("".to_string()).expect("Failed to send a blank string to Waybar.");
-        send_signal().expect("Failed to send update signal to Waybar.");
+        send_update_signal().expect("Failed to send update signal to Waybar.");
     }
     Ok(())
 }
@@ -117,35 +116,53 @@ fn truncate_output(text: String) -> String {
 }
 
 fn escape_ampersand(text: String) -> String {
+    // Waybar doesn't like ampersand. So we replace them in the output string.
     let result = str::replace(&text, "&", "&amp;");
     result
 }
 
 fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<(), Box<dyn Error>> {
+    // First we try to get the ID of Spotify, as well as the ID of the signal sender
     let id = get_spotify_id(&conn);
     let sender_id = msg.sender().unwrap().to_string();
 
+    // Check if it was indeed Spotify that sent the signal, otherwise we just return an Ok and do nothing else.
     if let Ok(spotify_id) = id {
-        if spotify_id != sender_id {
+        if spotify_id != Some(sender_id) {
             return Ok(());
         }
 
-        let now_playing: Option<Song> =
-            unpack_message(&conn, &msg).expect("Failed to unpack the message.");
-        if let Some(mut song) = now_playing {
-            match song.playbackstatus.as_str() {
-                "Playing" => song.playbackstatus = "".to_string(),
-                "Paused" => song.playbackstatus = "Paused: ".to_string(),
-                &_ => (),
+        // Unpack the message received from the signal
+        let now_playing = unpack_signal(&msg);
+
+        match now_playing {
+            // Assuming we got something useful back we proceed to prepare the output
+            Ok(now_playing) => {
+                if let Some(song) = now_playing {
+                    // This will use the fields in the Song. If it it's None it will retrieve the missing information
+                    // This is done to make sure that we have accurate information to pass on to output
+                    let artist = song.artist.unwrap_or_else(|| get_metadata(conn).unwrap().0);
+                    let title = song.title.unwrap_or_else(|| get_metadata(conn).unwrap().1);
+                    let playbackstatus = song
+                        .playbackstatus
+                        .unwrap_or_else(|| get_playbackstatus(conn).unwrap());
+
+                    // The default, for now.
+                    let separator = String::from(" - ");
+
+                    // TODO
+                    // This is not pretty.
+                    let mut artist_song = artist + &separator + &title;
+                    artist_song = truncate_output(artist_song);
+                    artist_song = escape_ampersand(artist_song);
+
+                    write_to_file(format!("{} {}", playbackstatus, artist_song))
+                        .expect("Failed to write to file.");
+                    send_update_signal().expect("Failed to send update signal to Waybar.");
+                }
             }
-
-            let mut artist_song = song.artist + " - " + &song.title;
-            artist_song = truncate_output(artist_song);
-            artist_song = escape_ampersand(artist_song);
-
-            write_to_file(format!("{}{}", song.playbackstatus, artist_song))
-                .expect("Failed to write to file.");
-            send_signal().expect("Failed to send update signal to Waybar.");
+            // Bail on error.
+            Err(_) => (),
         }
     }
     Ok(())
@@ -158,75 +175,87 @@ fn write_to_file(text: String) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn unpack_message(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Box<dyn Error>> {
+fn unpack_signal(msg: &Message) -> Result<Option<Song>, Box<dyn Error>> {
+    // Read the two first arguments of the received message
     let read_msg: Result<(String, PropMap), TypeMismatchError> = msg.read2();
 
+    // Get the HashMap from the second argument, which contains the relevant info
     let map = &read_msg.unwrap().1;
 
+    // Unwrap the string that tells us what kind of contents is in the message
     let contents = map.keys().nth(0).unwrap().as_str();
 
+    // Match the contents to perform the correct unpacking
     match contents {
+        // Unpack the metadata to get artist and title of the song
         "Metadata" => {
             let metadata: &dyn RefArg = &map["Metadata"].0;
             let map: &arg::PropMap = arg::cast(metadata).unwrap();
             let song_title: Option<&String> = arg::prop_cast(&map, "xesam:title");
             let song_artist: Option<&Vec<String>> = arg::prop_cast(&map, "xesam:artist");
-            let song_playbackstatus: String = get_playbackstatus(&conn).unwrap().to_string();
 
             Ok(Some(Song {
-                artist: song_artist.unwrap()[0].to_string(),
-                title: song_title.unwrap().to_string(),
-                playbackstatus: song_playbackstatus,
+                artist: Some(song_artist.unwrap()[0].to_string()),
+                title: Some(song_title.unwrap().to_string()),
+                playbackstatus: None,
             }))
         }
-        "PlaybackStatus" => {
-            let song_playbackstatus: String = map["PlaybackStatus"].0.as_str().unwrap().to_string();
-            let song_metadata: (String, String) = get_metadata(&conn).unwrap();
-            let song_artist: String = song_metadata.0;
-            let song_title: String = song_metadata.1;
-
-            Ok(Some(Song {
-                artist: song_artist,
-                title: song_title,
-                playbackstatus: song_playbackstatus,
-            }))
-        }
+        // If we receive an update on PlaybackStatus we receive no infromation about artist or title
+        "PlaybackStatus" => Ok(Some(Song {
+            artist: None,
+            title: None,
+            playbackstatus: Some(map["PlaybackStatus"].0.as_str().unwrap().to_string()),
+        })),
         _ => Ok(None),
     }
 }
 
-fn get_metadata(conn: &LocalConnection) -> Result<(String, String), Box<dyn Error>> {
-    let proxy = conn.with_proxy(
-        "org.mpris.MediaPlayer2.spotify",
-        "/org/mpris/MediaPlayer2",
-        Duration::from_millis(5000),
-    );
-
-    let metadata: PropMap = proxy.get("org.mpris.MediaPlayer2.Player", "Metadata")?;
-    let title: Option<&String> = arg::prop_cast(&metadata, "xesam:title");
-    let artist: Option<&Vec<String>> = arg::prop_cast(&metadata, "xesam:artist");
-
-    let result = (artist.unwrap()[0].to_string(), title.unwrap().to_string());
-
-    Ok(result)
-}
-
 fn get_playbackstatus(conn: &LocalConnection) -> Result<String, Box<dyn Error>> {
-    let proxy = conn.with_proxy(
+    let message = dbus::Message::call_with_args(
         "org.mpris.MediaPlayer2.spotify",
         "/org/mpris/MediaPlayer2",
-        Duration::from_millis(5000),
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        ("org.mpris.MediaPlayer2.Player", "PlaybackStatus"),
     );
 
-    let playbackstatus: Box<dyn arg::RefArg> =
-        proxy.get("org.mpris.MediaPlayer2.Player", "PlaybackStatus")?;
+    let reply = conn
+        .send_with_reply_and_block(message, Duration::from_millis(5000))
+        .unwrap();
 
-    let result = playbackstatus.as_str().unwrap().to_string();
+    let playbackstatus: Result<Variant<String>, TypeMismatchError> = reply.read1();
+
+    let result = playbackstatus.unwrap().0;
 
     Ok(result)
 }
 
-fn send_signal() -> Result<(), Box<dyn Error>> {
+fn get_metadata(conn: &LocalConnection) -> Result<(String, String), Box<dyn Error>> {
+    let message = dbus::Message::call_with_args(
+        "org.mpris.MediaPlayer2.spotify",
+        "/org/mpris/MediaPlayer2",
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        ("org.mpris.MediaPlayer2.Player", "Metadata"),
+    );
+
+    let reply = conn
+        .send_with_reply_and_block(message, Duration::from_millis(5000))
+        .unwrap();
+
+    let metadata: Result<Variant<PropMap>, TypeMismatchError> = reply.read1();
+
+    let properties = metadata.unwrap().0;
+
+    let title: Option<&String> = arg::prop_cast(&properties, "xesam:title");
+    let artist: Option<&Vec<String>> = arg::prop_cast(&properties, "xesam:artist");
+
+    let result: (String, String) = (artist.unwrap()[0].to_string(), title.unwrap().to_string());
+
+    Ok(result)
+}
+
+fn send_update_signal() -> Result<(), Box<dyn Error>> {
     let signal = format!("-RTMIN+{}", args::Args::parse().signal);
 
     Command::new("pkill")
