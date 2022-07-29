@@ -31,9 +31,17 @@ struct Song {
 fn main() -> Result<(), Box<dyn Error>> {
     clap::Command::new("Lystra")
         .about("A simple and small app to let Waybar display what is playing on Spotify.")
-        .arg(arg!(-l --length <NUMBER> "Set max length of output. Default: 40").required(false))
+        .arg(arg!(-l --length <NUMBER> "Set max length of output. Default: <40>").required(false))
         .arg(
-            arg!(-s --signal <NUMBER> "Set signal number used to update Waybar. Default: 8")
+            arg!(-s --signal <NUMBER> "Set signal number used to update Waybar. Default: <8>")
+                .required(false),
+        )
+        .arg(
+            arg!(-p --playing <STRING> "Set max length of output. Default: <Playing:>")
+                .required(false),
+        )
+        .arg(
+            arg!(-n --notplaying <STRING> "Set max length of output. Default: <Paused:>")
                 .required(false),
         )
         .get_matches();
@@ -143,9 +151,16 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<(), Box<dy
                     // This is done to make sure that we have accurate information to pass on to output
                     let artist = song.artist.unwrap_or_else(|| get_metadata(conn).unwrap().0);
                     let title = song.title.unwrap_or_else(|| get_metadata(conn).unwrap().1);
-                    let playbackstatus = song
+                    let mut playbackstatus = song
                         .playbackstatus
                         .unwrap_or_else(|| get_playbackstatus(conn).unwrap());
+
+                    // Swap out the default status message
+                    if playbackstatus == "Playing" {
+                        playbackstatus = args::Args::parse().playing;
+                    } else if playbackstatus == "Paused" {
+                        playbackstatus = args::Args::parse().notplaying;
+                    }
 
                     // The default, for now.
                     let separator = String::from(" - ");
