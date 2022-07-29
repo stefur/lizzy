@@ -33,10 +33,11 @@ The main goal of this application is for me to explore and learn a bit of Rust, 
 Currently the following flags can be used:
 - `-l`, `--length` is used to set the length of the string before truncating the text (adding …). Default: 40
 - `-s`, `--signal` to set a custom signal number used to update Waybar. Default: 8
+- `-p`, `--playing`: set your own indicator for when a song is playing. Default: "Playing:"
+- `-n`, `--notplaying`: set your own indicator for when a song is paused. Default: "Paused:"
 
 ## Todo
-- More user configuration options of output (custom status indicator, separator, order of output)
-- Simplify the property fetching by sending messages and awaiting replies
+- More user configuration options of output (custom separator, order of output)
 - Clear output on quit/termination
 - Better and more examples
 - Make a release?
