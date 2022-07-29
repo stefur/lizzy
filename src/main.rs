@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use dbus::arg::{Iter, PropMap, RefArg, TypeMismatchError};
 use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
+use dbus::blocking::BlockingSender;
 use dbus::message::MatchRule;
+use dbus::Error as DBusError;
 use dbus::Message;
 use dbus::MessageType::Signal;
 use dbus::{arg, blocking::LocalConnection};
@@ -235,12 +237,30 @@ fn send_signal() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn get_spotify_id(conn: &LocalConnection) -> Result<String, Box<dyn Error>> {
-    let proxy = conn.with_proxy("org.freedesktop.DBus", "/", Duration::from_millis(5000));
-    let (spotify_id,): (String,) = proxy.method_call(
+fn get_spotify_id(
+    conn: &LocalConnection,
+) -> Result<Option<String>, (DBusError, TypeMismatchError)> {
+    // Create a message with a method call to ask for the ID of Spotify
+    let message = dbus::Message::call_with_args(
+        "org.freedesktop.DBus",
+        "/",
         "org.freedesktop.DBus",
         "GetNameOwner",
         ("org.mpris.MediaPlayer2.spotify",),
-    )?;
-    Ok(spotify_id)
+    );
+
+    // Send the message and await the reply
+    let reply: Result<Message, DBusError> =
+        conn.send_with_reply_and_block(message, Duration::from_millis(5000));
+
+    match reply {
+        // If we get a reply, we unpack ID from the message and return it
+        Ok(reply) => {
+            let read_msg: Result<String, TypeMismatchError> = reply.read1();
+            let spotify_id = read_msg.unwrap();
+            Ok(Some(spotify_id))
+        }
+        // If Spotify is not running we'll receive an error in return, which is fine, so return None instead
+        Err(_) => Ok(None),
+    }
 }
