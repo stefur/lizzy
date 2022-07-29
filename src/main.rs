@@ -106,12 +106,12 @@ fn truncate_output(text: String) -> String {
     let mut text: String = text;
     let max_length: usize = args::Args::parse().length;
 
-    if text.len() > max_length {
+    if text.chars().count() > max_length {
         let upto = text
             .char_indices()
             .map(|(i, _)| i)
             .nth(max_length)
-            .unwrap_or(text.len());
+            .unwrap_or(text.chars().count());
         text.truncate(upto);
 
         let mut result: String = format!("{}{}", text, "…");
