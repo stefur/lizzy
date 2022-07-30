@@ -14,7 +14,7 @@ use dbus::{arg, blocking::LocalConnection};
 
 use clap::{arg, Parser};
 
-mod args;
+mod options;
 
 struct NameOwnerChanged {
     name: String,
@@ -31,19 +31,16 @@ struct Song {
 fn main() -> Result<(), Box<dyn Error>> {
     clap::Command::new("Lystra")
         .about("A simple and small app to let Waybar display what is playing on Spotify.")
-        .arg(arg!(-l --length <NUMBER> "Set max length of output. Default: <40>").required(false))
+        .arg(arg!(--length <NUMBER> "Set max length of output. Default: <40>").required(false))
         .arg(
-            arg!(-s --signal <NUMBER> "Set signal number used to update Waybar. Default: <8>")
+            arg!(--signal <NUMBER> "Set signal number used to update Waybar. Default: <8>")
                 .required(false),
         )
         .arg(
-            arg!(-p --playing <STRING> "Set max length of output. Default: <Playing:>")
+            arg!(--playing <STRING> "Set max length of output. Default: <Playing:>")
                 .required(false),
         )
-        .arg(
-            arg!(-n --notplaying <STRING> "Set max length of output. Default: <Paused:>")
-                .required(false),
-        )
+        .arg(arg!(--paused <STRING> "Set max length of output. Default: <Paused:>").required(false))
         .get_matches();
 
     let conn = LocalConnection::new_session().expect("D-Bus connection failed!");
@@ -104,7 +101,7 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
 /// Truncate the text accordingly before output
 fn truncate_output(text: String) -> String {
     let mut text: String = text;
-    let max_length: usize = args::Args::parse().length;
+    let max_length: usize = options::Args::parse().length;
 
     if text.chars().count() > max_length {
         let upto = text
@@ -155,9 +152,9 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<(), Box<dy
                 if let Some(mut song) = now_playing {
                     // Swap out the default status message
                     if song.playbackstatus == "Playing" {
-                        song.playbackstatus = args::Args::parse().playing;
+                        song.playbackstatus = options::Args::parse().playing;
                     } else if song.playbackstatus == "Paused" {
-                        song.playbackstatus = args::Args::parse().notplaying;
+                        song.playbackstatus = options::Args::parse().paused;
                     }
 
                     // The default, for now.
@@ -279,7 +276,7 @@ fn get_metadata(conn: &LocalConnection) -> Result<(String, String), Box<dyn Erro
 
 /// Sends a signal to Waybar so that the output is updated
 fn send_update_signal() -> Result<(), Box<dyn Error>> {
-    let signal = format!("-RTMIN+{}", args::Args::parse().signal);
+    let signal = format!("-RTMIN+{}", options::Args::parse().signal);
 
     Command::new("pkill")
         .arg(signal)
