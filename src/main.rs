@@ -114,13 +114,15 @@ fn truncate_output(text: String) -> String {
             .unwrap_or(text.chars().count());
         text.truncate(upto);
 
-        let mut result: String = format!("{}{}", text, "…");
+        text = text.trim_end().to_string();
 
-        if result.contains("(") && !result.contains(")") {
-            result = format!("{}{}", result, ")")
+        text = format!("{}{}", text, "…");
+
+        if text.contains("(") && !text.contains(")") {
+            text = format!("{}{}", text, ")")
         }
 
-        return result;
+        return text;
     } else {
         return text.to_string();
     }
