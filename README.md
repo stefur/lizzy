@@ -30,11 +30,14 @@ The main goal of this application is for me to explore and learn a bit of Rust, 
 4. Listen to music!
 
 ## Usage
-Currently the following flags can be used:
-- `-l`, `--length` is used to set the length of the string before truncating the text (adding …). Default: 40
-- `-s`, `--signal` to set a custom signal number used to update Waybar. Default: 8
-- `-p`, `--playing`: set your own indicator for when a song is playing. Default: "Playing:"
-- `-n`, `--notplaying`: set your own indicator for when a song is paused. Default: "Paused:"
+Currently the following options can be used to customize the output of Lystra.
+
+| Flag | Default value | Description |
+| --- | --- | --- |
+| `--length` | 40 | Set the length of the string before truncating the text (and adds …). |
+| `--signal` | 8 | Set a custom signal number used to update Waybar. |
+| `--playing` | "Playing:" | Set your own indicator for when a song is playing. |
+| `--paused` | "Paused:" | Set your own indicator for when a song is paused. |
 
 ## Todo
 - More user configuration options of output (custom separator, order of output)
