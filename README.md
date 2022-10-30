@@ -38,8 +38,8 @@ Currently the following options can be used to customize the output of Lystra.
 | `--signal` | 8 | Set a custom signal number used to update Waybar. |
 | `--playing` | "Playing: " | Set your own indicator for when a song is playing. |
 | `--paused` | "Paused: " | Set your own indicator for when a song is paused. |
-| `--separator` | " - " | Separator for <artist> and <title> in the output. |
-| `--order` | "artist,title" | Comma-separated setting with the keywords <artist> and <title> to set a desired order of the output. |
+| `--separator` | " - " | Separator for *artist* and *title* in the output. |
+| `--order` | "artist,title" | Comma-separated setting with the keywords *artist* and *title* to set a desired order of the output. |
 
 ## Todo
 - Better and more examples of usage.
