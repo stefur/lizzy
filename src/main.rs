@@ -29,6 +29,73 @@ struct Song {
     playbackstatus: String,
 }
 
+struct Output {
+    now_playing: String,
+    playbackstatus: String,
+}
+
+impl Output {
+    /// Construct the output according to defined order of artist and title.
+    fn construct(song: Song) -> Output {
+        let order = options::Args::parse().order; // Get the order of output
+        let separator = options::Args::parse().separator; // Get the separator
+
+        let order = order.split(","); // Separate the keywords for "artist" and "title"
+        let mut order_set: [Option<&str>; 2] = [None, None]; // Set up an array to store the desired order
+
+        for (i, s) in order.enumerate() {
+            match s {
+                "artist" => {
+                    order_set[i] = Some(song.artist.as_str());
+                }
+                "title" => {
+                    order_set[i] = Some(song.title.as_str());
+                }
+                _ => (),
+            }
+        }
+        return Output {
+            playbackstatus: song.playbackstatus,
+            now_playing: format!(
+                "{}{}{}",
+                order_set[0].unwrap_or("Make sure you entered the output order correctly."),
+                separator,
+                order_set[1].unwrap_or("Make sure you entered the output order correctly.")
+            ), // The complete text
+        };
+    }
+
+    /// Shorten the output according to the determined max length
+    fn shorten(&mut self) -> &mut Self {
+        let max_length: usize = options::Args::parse().length;
+
+        if self.now_playing.chars().count() > max_length {
+            let upto = self
+                .now_playing
+                .char_indices()
+                .map(|(i, _)| i)
+                .nth(max_length)
+                .unwrap_or(self.now_playing.chars().count());
+            self.now_playing.truncate(upto);
+
+            self.now_playing = self.now_playing.trim_end().to_string();
+
+            self.now_playing = format!("{}{}", self.now_playing, "…");
+
+            if self.now_playing.contains("(") && !self.now_playing.contains(")") {
+                self.now_playing = format!("{}{}", self.now_playing, ")")
+            }
+        }
+        return self;
+    }
+
+    /// Waybar doesn't like ampersand. So we replace them in the output string.
+    fn escape_ampersand(&mut self) -> &mut Self {
+        self.now_playing = str::replace(&self.now_playing, "&", "&amp;");
+        return self;
+    }
+}
+
 fn main() -> Result<()> {
     clap::Command::new("Lystra")
         .about("A simple and small app to let Waybar display what is playing on Spotify.")
@@ -38,10 +105,21 @@ fn main() -> Result<()> {
                 .required(false),
         )
         .arg(
-            arg!(--playing <STRING> "Set max length of output. Default: <Playing:>")
+            arg!(--playing <STRING> "Set value for playbackstatus = Playing. Default: <Playing:>")
                 .required(false),
         )
-        .arg(arg!(--paused <STRING> "Set max length of output. Default: <Paused:>").required(false))
+        .arg(
+            arg!(--paused <STRING> "Set value for playbackstatus = Paused. Default: <Paused:>")
+                .required(false),
+        )
+        .arg(
+            arg!(--separator <STRING> "Set value for the separator. Default: <->")
+                .required(false),
+        )
+        .arg(
+            arg!(--order <STRING> "Set order of artist and song, comma-separated. Default: <artist,song>")
+                .required(false),
+        )
         .get_matches();
 
     let conn = LocalConnection::new_session().context("D-Bus connection failed!")?;
@@ -97,39 +175,6 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged> {
     })
 }
 
-/// Truncate the text accordingly before output
-fn truncate_output(text: String) -> String {
-    let mut text: String = text;
-    let max_length: usize = options::Args::parse().length;
-
-    if text.chars().count() > max_length {
-        let upto = text
-            .char_indices()
-            .map(|(i, _)| i)
-            .nth(max_length)
-            .unwrap_or(text.chars().count());
-        text.truncate(upto);
-
-        text = text.trim_end().to_string();
-
-        text = format!("{}{}", text, "…");
-
-        if text.contains("(") && !text.contains(")") {
-            text = format!("{}{}", text, ")")
-        }
-
-        return text;
-    } else {
-        return text.to_string();
-    }
-}
-
-/// Waybar doesn't like ampersand. So we replace them in the output string.
-fn escape_ampersand(text: String) -> String {
-    let result = str::replace(&text, "&", "&amp;");
-    result
-}
-
 /// Function to handle the incoming signals from Spotify when properties change
 fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<()> {
     // First we try to get the ID of Spotify, as well as the ID of the signal sender
@@ -153,17 +198,12 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<()> {
                 song.playbackstatus = options::Args::parse().paused;
             }
 
-            // The default, for now.
-            let separator = String::from(" - ");
+            let mut output = Output::construct(song);
 
-            // TODO
-            // This is not pretty.
-            let mut text = song.artist + &separator + &song.title;
-            text = truncate_output(text);
-            text = escape_ampersand(text);
-            let output = format!("{} {}", song.playbackstatus, text);
+            output.shorten().escape_ampersand();
 
-            write_to_file(output).expect("Failed to write to file.");
+            write_to_file(format!("{}{}", output.playbackstatus, output.now_playing))
+                .expect("Failed to write to file.");
             send_update_signal().expect("Failed to send update signal to Waybar.");
         }
     }
