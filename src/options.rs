@@ -21,4 +21,10 @@ pub struct Args {
     /// The order of artist and title value, comma-separated
     #[clap(long, value_parser, default_value = "artist,title")]
     pub order: String,
+    /// A specific text color for artist and title
+    #[clap(long, value_parser)]
+    pub textcolor: Option<String>,
+    /// A specific color for the playback status
+    #[clap(long, value_parser)]
+    pub playbackcolor: Option<String>,
 }

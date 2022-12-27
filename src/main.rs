@@ -94,11 +94,33 @@ impl Output {
         self.now_playing = str::replace(&self.now_playing, "&", "&amp;");
         return self;
     }
+
+    /// Apply color to artist/title as well as playback status.
+    fn colorize(&mut self) -> &mut Self {
+        let textcolor = options::Args::parse().textcolor; // Get the text color
+        let playbackcolor = options::Args::parse().playbackcolor; // Get the playback color
+
+        if let Some(textcolor) = textcolor {
+            self.now_playing = format!(
+                "<span foreground='{}'>{}</span>",
+                textcolor, self.now_playing
+            );
+        }
+
+        if let Some(playbackcolor) = playbackcolor {
+            self.playbackstatus = format!(
+                "<span foreground='{}'>{}</span>",
+                playbackcolor, self.playbackstatus
+            );
+        }
+
+        return self;
+    }
 }
 
 fn main() -> Result<()> {
     clap::Command::new("Lystra")
-        .about("A simple and small app to let Waybar display what is playing on Spotify.")
+        .about("A simple and small app to let Waybar display what song is playing on Spotify.")
         .arg(arg!(--length <NUMBER> "Set max length of output. Default: <40>").required(false))
         .arg(
             arg!(--signal <NUMBER> "Set signal number used to update Waybar. Default: <8>")
@@ -117,7 +139,15 @@ fn main() -> Result<()> {
                 .required(false),
         )
         .arg(
-            arg!(--order <STRING> "Set order of artist and song, comma-separated. Default: <artist,song>")
+            arg!(--order <STRING> "Set order of artist and title, comma-separated. Default: <artist,title>")
+                .required(false),
+        )
+        .arg(
+            arg!(--textcolor <STRING> "Set a specific text color for artist and title. Default: <None>")
+                .required(false),
+        )
+        .arg(
+            arg!(--playbackcolor <STRING> "Set a specific color for the playback status. Default: <None>")
                 .required(false),
         )
         .get_matches();
@@ -200,7 +230,7 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<()> {
 
             let mut output = Output::construct(song);
 
-            output.shorten().escape_ampersand();
+            output.shorten().escape_ampersand().colorize();
 
             write_to_file(format!("{}{}", output.playbackstatus, output.now_playing))
                 .expect("Failed to write to file.");
