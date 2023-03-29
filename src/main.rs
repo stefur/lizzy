@@ -40,7 +40,7 @@ impl Output {
         let order = options::Args::parse().order; // Get the order of output
         let separator = options::Args::parse().separator; // Get the separator
 
-        let order = order.split(","); // Separate the keywords for "artist" and "title"
+        let order = order.split(','); // Separate the keywords for "artist" and "title"
         let mut order_set: [Option<&str>; 2] = [None, None]; // Set up an array to store the desired order
 
         for (i, s) in order.enumerate() {
@@ -54,7 +54,7 @@ impl Output {
                 _ => (),
             }
         }
-        return Output {
+        Output {
             playbackstatus: song.playbackstatus,
             now_playing: format!(
                 "{}{}{}",
@@ -62,7 +62,7 @@ impl Output {
                 separator,
                 order_set[1].unwrap_or("Make sure you entered the output order correctly.")
             ), // The complete text
-        };
+        }
     }
 
     /// Shorten the output according to the determined max length
@@ -82,17 +82,17 @@ impl Output {
 
             self.now_playing = format!("{}{}", self.now_playing, "…");
 
-            if self.now_playing.contains("(") && !self.now_playing.contains(")") {
+            if self.now_playing.contains('(') && !self.now_playing.contains(')') {
                 self.now_playing = format!("{}{}", self.now_playing, ")")
             }
         }
-        return self;
+        self
     }
 
     /// Waybar doesn't like ampersand. So we replace them in the output string.
     fn escape_ampersand(&mut self) -> &mut Self {
         self.now_playing = str::replace(&self.now_playing, "&", "&amp;");
-        return self;
+        self
     }
 
     /// Apply color to artist/title as well as playback status.
@@ -114,7 +114,7 @@ impl Output {
             );
         }
 
-        return self;
+        self
     }
 }
 
@@ -168,12 +168,12 @@ fn main() -> Result<()> {
         .with_type(Signal);
 
     conn.add_match(properties_rule, |_: (), conn, msg| {
-        handle_properties(&conn, &msg).expect("Failed to handle properties.");
+        handle_properties(conn, msg).expect("Failed to handle properties.");
         true
     })?;
 
     conn.add_match(nameowner_rule, |_: (), _, msg| {
-        handle_nameowner(&msg).expect("Failed to handle nameowner.");
+        handle_nameowner(msg).expect("Failed to handle nameowner.");
         true
     })?;
 
@@ -188,7 +188,7 @@ fn handle_nameowner(msg: &Message) -> Result<()> {
     let nameowner: NameOwnerChanged =
         read_nameowner(msg).expect("Could not read the nameowner from incoming message.");
 
-    if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name == "" {
+    if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name.is_empty() {
         write_to_file("".to_string())?;
         send_update_signal()?;
     }
@@ -208,7 +208,7 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged> {
 /// Function to handle the incoming signals from Spotify when properties change
 fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<()> {
     // First we try to get the ID of Spotify, as well as the ID of the signal sender
-    let spotify_id = get_spotify_id(&conn);
+    let spotify_id = get_spotify_id(conn);
     let sender_id = msg.sender().unwrap().to_string();
 
     // Check if it was indeed Spotify that sent the signal, otherwise we just return an Ok and do nothing else.
@@ -218,7 +218,7 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<()> {
         }
 
         // Unpack the message received from the signal
-        let song = unpack_signal(&conn, &msg)?;
+        let song = unpack_signal(conn, msg)?;
 
         if let Some(mut song) = song {
             // Swap out the default status message
@@ -258,7 +258,7 @@ fn unpack_signal(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>> 
     let map = read_msg.1;
 
     // Unwrap the string that tells us what kind of contents is in the message
-    let contents = map.keys().nth(0).unwrap().as_str();
+    let contents = map.keys().next().unwrap().as_str();
 
     // Match the contents to perform the correct unpacking
     match contents {
@@ -267,19 +267,19 @@ fn unpack_signal(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>> 
         "Metadata" => {
             let metadata: &dyn RefArg = &map["Metadata"].0;
             let map: &arg::PropMap = arg::cast(metadata).unwrap();
-            let song_title: Option<&String> = arg::prop_cast(&map, "xesam:title");
-            let song_artist: Option<&Vec<String>> = arg::prop_cast(&map, "xesam:artist");
+            let song_title: Option<&String> = arg::prop_cast(map, "xesam:title");
+            let song_artist: Option<&Vec<String>> = arg::prop_cast(map, "xesam:artist");
 
             Ok(Some(Song {
                 artist: song_artist.unwrap()[0].to_string(),
                 title: song_title.unwrap().to_string(),
-                playbackstatus: get_playbackstatus(&conn).unwrap(),
+                playbackstatus: get_playbackstatus(conn).unwrap(),
             }))
         }
         // If we receive an update on PlaybackStatus we receive no infromation about artist or title
         // As above, no metadata is provided with the playbackstatus, so we have to get it ourselves
         "PlaybackStatus" => {
-            let artist_title = get_metadata(&conn).unwrap();
+            let artist_title = get_metadata(conn).unwrap();
             Ok(Some(Song {
                 artist: artist_title.0,
                 title: artist_title.1,
