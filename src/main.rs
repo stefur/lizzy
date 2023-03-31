@@ -13,8 +13,6 @@ use dbus::Message;
 use dbus::MessageType::Signal;
 use dbus::{arg, blocking::LocalConnection};
 
-use clap::{arg, Parser};
-
 mod options;
 
 struct NameOwnerChanged {
@@ -35,11 +33,8 @@ struct Output {
 }
 
 impl Output {
-    /// Construct the output according to defined order of artist and title.
-    fn construct(song: Song) -> Output {
-        let order = options::Args::parse().order; // Get the order of output
-        let separator = options::Args::parse().separator; // Get the separator
-
+    /// Create the output according to defined order of artist and title.
+    fn new(song: Song, order: &str, separator: &str) -> Output {
         let order = order.split(','); // Separate the keywords for "artist" and "title"
         let mut order_set: [Option<&str>; 2] = [None, None]; // Set up an array to store the desired order
 
@@ -66,15 +61,13 @@ impl Output {
     }
 
     /// Shorten the output according to the determined max length
-    fn shorten(&mut self) -> &mut Self {
-        let max_length: usize = options::Args::parse().length;
-
-        if self.now_playing.chars().count() > max_length {
+    fn shorten(&mut self, length: usize) -> &mut Self {
+        if self.now_playing.chars().count() > length {
             let upto = self
                 .now_playing
                 .char_indices()
                 .map(|(i, _)| i)
-                .nth(max_length)
+                .nth(length)
                 .unwrap_or(self.now_playing.chars().count());
             self.now_playing.truncate(upto);
 
@@ -89,6 +82,16 @@ impl Output {
         self
     }
 
+    fn set_status(&mut self, playing: &str, paused: &str) -> &mut Self {
+        if self.playbackstatus == "Playing" {
+            self.playbackstatus = playing.to_string();
+        } else if self.playbackstatus == "Paused" {
+            self.playbackstatus = paused.to_string();
+        }
+
+        self
+    }
+
     /// Waybar doesn't like ampersand. So we replace them in the output string.
     fn escape_ampersand(&mut self) -> &mut Self {
         self.now_playing = str::replace(&self.now_playing, "&", "&amp;");
@@ -96,18 +99,15 @@ impl Output {
     }
 
     /// Apply color to artist/title as well as playback status.
-    fn colorize(&mut self) -> &mut Self {
-        let textcolor = options::Args::parse().textcolor; // Get the text color
-        let playbackcolor = options::Args::parse().playbackcolor; // Get the playback color
-
-        if let Some(textcolor) = textcolor {
+    fn colorize(&mut self, textcolor: &str, playbackcolor: &str) -> &mut Self {
+        if !textcolor.is_empty() {
             self.now_playing = format!(
                 "<span foreground='{}'>{}</span>",
                 textcolor, self.now_playing
             );
         }
 
-        if let Some(playbackcolor) = playbackcolor {
+        if !playbackcolor.is_empty() {
             self.playbackstatus = format!(
                 "<span foreground='{}'>{}</span>",
                 playbackcolor, self.playbackstatus
@@ -119,38 +119,13 @@ impl Output {
 }
 
 fn main() -> Result<()> {
-    clap::Command::new("Lystra")
-        .about("A simple and small app to let Waybar display what song is playing on Spotify.")
-        .arg(arg!(--length <NUMBER> "Set max length of output. Default: <40>").required(false))
-        .arg(
-            arg!(--signal <NUMBER> "Set signal number used to update Waybar. Default: <8>")
-                .required(false),
-        )
-        .arg(
-            arg!(--playing <STRING> "Set value for playbackstatus = Playing. Default: <Playing:>")
-                .required(false),
-        )
-        .arg(
-            arg!(--paused <STRING> "Set value for playbackstatus = Paused. Default: <Paused:>")
-                .required(false),
-        )
-        .arg(
-            arg!(--separator <STRING> "Set value for the separator. Default: <->")
-                .required(false),
-        )
-        .arg(
-            arg!(--order <STRING> "Set order of artist and title, comma-separated. Default: <artist,title>")
-                .required(false),
-        )
-        .arg(
-            arg!(--textcolor <STRING> "Set a specific text color for artist and title. Default: <None>")
-                .required(false),
-        )
-        .arg(
-            arg!(--playbackcolor <STRING> "Set a specific color for the playback status. Default: <None>")
-                .required(false),
-        )
-        .get_matches();
+    let args: options::Arguments = match options::parse_args() {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            std::process::exit(1);
+        }
+    };
 
     let conn = LocalConnection::new_session().context("D-Bus connection failed!")?;
 
@@ -167,35 +142,33 @@ fn main() -> Result<()> {
         .with_sender("org.freedesktop.DBus")
         .with_type(Signal);
 
-    conn.add_match(properties_rule, |_: (), conn, msg| {
-        let mut song = read_song_properties(conn, msg)
+    conn.add_match(properties_rule, move |_: (), conn, msg| {
+        let song = read_song_properties(conn, msg)
             .expect("Failed to handle properties.")
             .unwrap();
 
-        if song.playbackstatus == "Playing" {
-            song.playbackstatus = options::Args::parse().playing;
-        } else if song.playbackstatus == "Paused" {
-            song.playbackstatus = options::Args::parse().paused;
-        }
+        let mut output = Output::new(song, &args.order, &args.separator);
 
-        let mut output = Output::construct(song);
-
-        output.shorten().escape_ampersand().colorize();
+        output
+            .shorten(args.length)
+            .escape_ampersand()
+            .set_status(&args.playing, &args.paused)
+            .colorize(&args.textcolor, &args.playbackcolor);
 
         write_to_file(format!("{}{}", output.playbackstatus, output.now_playing))
             .expect("Failed to write to file.");
-        send_update_signal().expect("Failed to send update signal to Waybar.");
+        send_update_signal(args.signal).expect("Failed to send update signal to Waybar.");
         true
     })?;
 
     // Handles any incoming messages when a nameowner has changed.
-    conn.add_match(nameowner_rule, |_: (), _, msg| {
+    conn.add_match(nameowner_rule, move |_: (), _, msg| {
         let nameowner: NameOwnerChanged =
             read_nameowner(msg).expect("Could not read the nameowner from incoming message.");
 
         if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name.is_empty() {
             write_to_file("".to_string()).expect("Failed to clear output by writing to file.");
-            send_update_signal().expect("Failed to update Waybar.");
+            send_update_signal(args.signal).expect("Failed to update Waybar.");
         }
         true
     })?;
@@ -334,8 +307,8 @@ fn get_metadata(conn: &LocalConnection) -> Result<(String, String)> {
 }
 
 /// Sends a signal to Waybar so that the output is updated
-fn send_update_signal() -> Result<()> {
-    let signal = format!("-RTMIN+{}", options::Args::parse().signal);
+fn send_update_signal(signal: u8) -> Result<()> {
+    let signal = format!("-RTMIN+{}", signal);
 
     Command::new("pkill")
         .arg(signal)

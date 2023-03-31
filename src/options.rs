@@ -1,30 +1,67 @@
-use clap::Parser;
-
-#[derive(Parser)]
-#[clap()]
-pub struct Args {
-    /// Max length of the output before truncating
-    #[clap(long, value_parser, default_value_t = 45)]
+const HELP: &str = "\
+Lystra
+USAGE:
+  lystra --[OPTIONS] [INPUT]
+FLAGS:
+  -h, --help            Prints help information
+OPTIONS:
+  --length NUMBER       Max length of the output before truncating      <Default: 45>
+  --signal NUMBER       Signal number used to update Waybar             <Default: 8>
+  --playing STRING      Indicator used when a song is playing           <Default: Playing: >
+  --paused STRING       Indicator used when a song is paused            <Default: Paused: >
+  --separator STRING    A separator between song artist and title       <Default: - >
+  --order STRING        The order of artist and title, comma-separated  <Default: artist,title>
+  --textcolor STRING    Text color for artist and title                 <Default: None>
+  --textcolor STRING    Text color for playback status                  <Default: None>
+";
+pub struct Arguments {
     pub length: usize,
-    /// Signal number used to update Waybar
-    #[clap(long, value_parser, default_value_t = 8)]
     pub signal: u8,
-    /// The indicator used when a song is playing
-    #[clap(long, value_parser, default_value = "Playing: ")]
     pub playing: String,
-    /// The indicator used when a song is paused
-    #[clap(long, value_parser, default_value = "Paused: ")]
     pub paused: String,
-    /// A separator between song artist and title
-    #[clap(long, value_parser, default_value = " - ")]
     pub separator: String,
-    /// The order of artist and title value, comma-separated
-    #[clap(long, value_parser, default_value = "artist,title")]
     pub order: String,
-    /// A specific text color for artist and title
-    #[clap(long, value_parser)]
-    pub textcolor: Option<String>,
-    /// A specific color for the playback status
-    #[clap(long, value_parser)]
-    pub playbackcolor: Option<String>,
+    pub textcolor: String,
+    pub playbackcolor: String,
+}
+
+pub fn parse_args() -> Result<Arguments, pico_args::Error> {
+    let mut pargs = pico_args::Arguments::from_env();
+
+    // Help has a higher priority and should be handled separately.
+    if pargs.contains(["-h", "--help"]) {
+        print!("{}", HELP);
+        std::process::exit(0);
+    }
+
+    let args = Arguments {
+        length: pargs.opt_value_from_str("--length")?.unwrap_or(45),
+        signal: pargs.opt_value_from_str("--signal")?.unwrap_or(8),
+        playing: pargs
+            .opt_value_from_str("--playing")?
+            .unwrap_or(String::from("Playing: ")),
+        paused: pargs
+            .opt_value_from_str("--paused")?
+            .unwrap_or(String::from("Paused: ")),
+        separator: pargs
+            .opt_value_from_str("--separator")?
+            .unwrap_or(String::from(" - ")),
+        order: pargs
+            .opt_value_from_str("--order")?
+            .unwrap_or(String::from("artist,title")),
+        textcolor: pargs
+            .opt_value_from_str("--textcolor")?
+            .unwrap_or(String::from("")),
+        playbackcolor: pargs
+            .opt_value_from_str("--playbackcolor")?
+            .unwrap_or(String::from("")),
+    };
+
+    // It's up to the caller what to do with the remaining arguments.
+    let remaining = pargs.finish();
+    if !remaining.is_empty() {
+        eprintln!("Warning: unused arguments left: {:?}.", remaining);
+    }
+
+    Ok(args)
 }
