@@ -168,12 +168,35 @@ fn main() -> Result<()> {
         .with_type(Signal);
 
     conn.add_match(properties_rule, |_: (), conn, msg| {
-        handle_properties(conn, msg).expect("Failed to handle properties.");
+        let mut song = read_song_properties(conn, msg)
+            .expect("Failed to handle properties.")
+            .unwrap();
+
+        if song.playbackstatus == "Playing" {
+            song.playbackstatus = options::Args::parse().playing;
+        } else if song.playbackstatus == "Paused" {
+            song.playbackstatus = options::Args::parse().paused;
+        }
+
+        let mut output = Output::construct(song);
+
+        output.shorten().escape_ampersand().colorize();
+
+        write_to_file(format!("{}{}", output.playbackstatus, output.now_playing))
+            .expect("Failed to write to file.");
+        send_update_signal().expect("Failed to send update signal to Waybar.");
         true
     })?;
 
+    // Handles any incoming messages when a nameowner has changed.
     conn.add_match(nameowner_rule, |_: (), _, msg| {
-        handle_nameowner(msg).expect("Failed to handle nameowner.");
+        let nameowner: NameOwnerChanged =
+            read_nameowner(msg).expect("Could not read the nameowner from incoming message.");
+
+        if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name.is_empty() {
+            write_to_file("".to_string()).expect("Failed to clear output by writing to file.");
+            send_update_signal().expect("Failed to update Waybar.");
+        }
         true
     })?;
 
@@ -181,18 +204,6 @@ fn main() -> Result<()> {
         conn.process(Duration::from_millis(1000))
             .expect("Failed to set up loop to handle messages.");
     }
-}
-
-/// Handles any incoming messages when a nameowner has changed.
-fn handle_nameowner(msg: &Message) -> Result<()> {
-    let nameowner: NameOwnerChanged =
-        read_nameowner(msg).expect("Could not read the nameowner from incoming message.");
-
-    if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name.is_empty() {
-        write_to_file("".to_string())?;
-        send_update_signal()?;
-    }
-    Ok(())
 }
 
 /// This unpacks a message containing NameOwnerChanged. The field old_name is in fact never used.
@@ -206,7 +217,7 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged> {
 }
 
 /// Function to handle the incoming signals from Spotify when properties change
-fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<()> {
+fn read_song_properties(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>> {
     // First we try to get the ID of Spotify, as well as the ID of the signal sender
     let spotify_id = get_spotify_id(conn);
     let sender_id = msg.sender().unwrap().to_string();
@@ -214,31 +225,16 @@ fn handle_properties(conn: &LocalConnection, msg: &Message) -> Result<()> {
     // Check if it was indeed Spotify that sent the signal, otherwise we just return an Ok and do nothing else.
     if let Ok(spotify_id) = spotify_id {
         if spotify_id != Some(sender_id) {
-            return Ok(());
+            return Ok(None);
         }
 
-        // Unpack the message received from the signal
-        let song = unpack_signal(conn, msg)?;
+        // Unpack the song received from the signal
+        let song = unpack_song(conn, msg)?;
 
-        if let Some(mut song) = song {
-            // Swap out the default status message
-            if song.playbackstatus == "Playing" {
-                song.playbackstatus = options::Args::parse().playing;
-            } else if song.playbackstatus == "Paused" {
-                song.playbackstatus = options::Args::parse().paused;
-            }
-
-            let mut output = Output::construct(song);
-
-            output.shorten().escape_ampersand().colorize();
-
-            write_to_file(format!("{}{}", output.playbackstatus, output.now_playing))
-                .expect("Failed to write to file.");
-            send_update_signal().expect("Failed to send update signal to Waybar.");
-        }
+        Ok(song)
+    } else {
+        Ok(None)
     }
-
-    Ok(())
 }
 
 /// Writes out the finished output to a file that is then parsed by Waybar
@@ -249,8 +245,8 @@ fn write_to_file(text: String) -> Result<()> {
     Ok(())
 }
 
-/// Unpacks an incoming message when receiving a signal of PropertiesChanged
-fn unpack_signal(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>> {
+/// Unpacks an incoming message when receiving a signal of PropertiesChanged from Spotify
+fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>> {
     // Read the two first arguments of the received message
     let read_msg: (String, PropMap) = msg.read2()?;
 
