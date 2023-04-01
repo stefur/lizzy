@@ -10,6 +10,5 @@ lto = true # This can remove dead code and often times reduces binary size.
 codegen-units = 1 # Allow for maximum size reduction optimizations, but longer compile time.
 
 [dependencies]
-anyhow = "1.0"
 dbus = "0.9"
 pico-args = "0.5"

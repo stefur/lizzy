@@ -1,11 +1,10 @@
+use std::error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::process::Command;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-
-use dbus::arg::{Iter, PropMap, RefArg, Variant};
+use dbus::arg::{Iter, PropMap, RefArg, TypeMismatchError, Variant};
 use dbus::blocking::BlockingSender;
 use dbus::message::MatchRule;
 use dbus::Error as DBusError;
@@ -82,6 +81,7 @@ impl Output {
         self
     }
 
+    /// Apply playback status arguments.
     fn set_status(&mut self, playing: &str, paused: &str) -> &mut Self {
         if self.playbackstatus == "Playing" {
             self.playbackstatus = playing.to_string();
@@ -118,7 +118,7 @@ impl Output {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<(), Box<dyn Error>> {
     let args: options::Arguments = match options::parse_args() {
         Ok(value) => value,
         Err(err) => {
@@ -127,7 +127,8 @@ fn main() -> Result<()> {
         }
     };
 
-    let conn = LocalConnection::new_session().context("D-Bus connection failed!")?;
+    let conn =
+        LocalConnection::new_session().expect("Lystra should be able to connect to session bus.");
 
     let properties_rule = MatchRule::new()
         .with_path("/org/mpris/MediaPlayer2")
@@ -159,7 +160,7 @@ fn main() -> Result<()> {
 
                 // Write out the output to file and update Waybar
                 write_to_file(format!("{}{}", output.playbackstatus, output.now_playing))
-                    .expect("Failed to write to file.");
+                    .expect("Lystra needs to write output to file (/tmp/lystra_output.txt).");
                 send_update_signal(args.signal).expect("Failed to send update signal to Waybar.");
             }
         }
@@ -168,24 +169,26 @@ fn main() -> Result<()> {
 
     // Handles any incoming messages when a nameowner has changed.
     conn.add_match(nameowner_rule, move |_: (), _, msg| {
-        let nameowner: NameOwnerChanged =
-            read_nameowner(msg).expect("Could not read the nameowner from incoming message.");
+        let nameowner: NameOwnerChanged = read_nameowner(msg).expect(
+            "Read the nameowner from incoming message needs to be done to determine the change.",
+        );
 
         if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name.is_empty() {
-            write_to_file("".to_string()).expect("Failed to clear output by writing to file.");
-            send_update_signal(args.signal).expect("Failed to update Waybar.");
+            write_to_file("".to_string()).expect("Need to clear output by writing to file.");
+            send_update_signal(args.signal)
+                .expect("Clearing the output should also trigger an update to Waybar.");
         }
         true
     })?;
 
     loop {
         conn.process(Duration::from_millis(1000))
-            .expect("Failed to set up loop to handle messages.");
+            .expect("Lystra should be able to set up a loop to listen for messages.");
     }
 }
 
 /// This unpacks a message containing NameOwnerChanged. The field old_name is in fact never used.
-fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged> {
+fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> {
     let mut iter: Iter = msg.iter_init();
     Ok(NameOwnerChanged {
         name: iter.read()?,
@@ -195,7 +198,7 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged> {
 }
 
 /// Writes out the finished output to a file that is then parsed by Waybar
-fn write_to_file(text: String) -> Result<()> {
+fn write_to_file(text: String) -> Result<(), Box<dyn Error>> {
     let text: &[u8] = text.as_bytes();
     let mut file: File = File::create("/tmp/lystra_output.txt")?;
     file.write_all(text)?;
@@ -203,7 +206,7 @@ fn write_to_file(text: String) -> Result<()> {
 }
 
 /// Unpacks an incoming message when receiving a signal of PropertiesChanged from Spotify
-fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>> {
+fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Box<dyn Error>> {
     // Read the two first arguments of the received message
     let read_msg: (String, PropMap) = msg.read2()?;
 
@@ -244,7 +247,7 @@ fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>> {
 }
 
 /// Gets the playbackstatus from Spotify
-fn get_playbackstatus(conn: &LocalConnection) -> Result<String> {
+fn get_playbackstatus(conn: &LocalConnection) -> Result<String, Box<dyn Error>> {
     let message = dbus::Message::call_with_args(
         "org.mpris.MediaPlayer2.spotify",
         "/org/mpris/MediaPlayer2",
@@ -265,7 +268,7 @@ fn get_playbackstatus(conn: &LocalConnection) -> Result<String> {
 }
 
 /// Gets the currently playing artist and title from Spotify in a tuple: (artist, title)
-fn get_metadata(conn: &LocalConnection) -> Result<(String, String)> {
+fn get_metadata(conn: &LocalConnection) -> Result<(String, String), Box<dyn Error>> {
     let message = dbus::Message::call_with_args(
         "org.mpris.MediaPlayer2.spotify",
         "/org/mpris/MediaPlayer2",
@@ -280,10 +283,10 @@ fn get_metadata(conn: &LocalConnection) -> Result<(String, String)> {
 
     let properties: PropMap = metadata.0;
 
-    let title: &String =
-        arg::prop_cast(&properties, "xesam:title").expect("Failed to get the song title.");
-    let artist: &Vec<String> =
-        arg::prop_cast(&properties, "xesam:artist").expect("Failed to get the song artist.");
+    let title: &String = arg::prop_cast(&properties, "xesam:title")
+        .expect("The song title should be present and extracted from the message.");
+    let artist: &Vec<String> = arg::prop_cast(&properties, "xesam:artist")
+        .expect("The song artist should be present and extracted from the message.");
 
     let result: (String, String) = (artist[0].to_owned(), title.to_owned());
 
@@ -291,14 +294,14 @@ fn get_metadata(conn: &LocalConnection) -> Result<(String, String)> {
 }
 
 /// Sends a signal to Waybar so that the output is updated
-fn send_update_signal(signal: u8) -> Result<()> {
+fn send_update_signal(signal: u8) -> Result<(), Box<dyn Error>> {
     let signal = format!("-RTMIN+{}", signal);
 
     Command::new("pkill")
         .arg(signal)
         .arg("waybar")
         .output()
-        .context("Failed to send a signal command to Waybar")?;
+        .expect("Should be able to execute the command to update Waybar.");
     Ok(())
 }
 
@@ -323,7 +326,9 @@ fn is_spotify(conn: &LocalConnection, msg: &Message) -> bool {
     match reply {
         // If we get a reply, we unpack the ID from the message and return it
         Ok(reply) => {
-            let spotify_id: String = reply.read1().expect("msg");
+            let spotify_id: String = reply
+                .read1()
+                .expect("Spotify ID should be a string in the first argument of the message");
             spotify_id == sender_id
         }
         // If Spotify is not running we'll receive an error in return, which is fine, so return false
