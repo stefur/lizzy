@@ -52,9 +52,9 @@ impl Output {
             playbackstatus: song.playbackstatus,
             now_playing: format!(
                 "{}{}{}",
-                order_set[0].unwrap_or("Make sure you entered the output order correctly."),
+                order_set[0].expect("Make sure you entered the output order correctly. Should be 'artist,title' or 'title,artist'."),
                 separator,
-                order_set[1].unwrap_or("Make sure you entered the output order correctly.")
+                order_set[1].expect("Make sure you entered the output order correctly. Should be 'artist,title' or 'title,artist'.")
             ), // The complete text
         }
     }
@@ -70,7 +70,7 @@ impl Output {
                 .unwrap_or(self.now_playing.chars().count());
             self.now_playing.truncate(upto);
 
-            self.now_playing = self.now_playing.trim_end().to_string();
+            self.now_playing = self.now_playing.trim_end().to_owned();
 
             self.now_playing = format!("{}{}", self.now_playing, "…");
 
@@ -84,9 +84,9 @@ impl Output {
     /// Apply playback status arguments.
     fn set_status(&mut self, playing: &str, paused: &str) -> &mut Self {
         if self.playbackstatus == "Playing" {
-            self.playbackstatus = playing.to_string();
+            self.playbackstatus = playing.to_owned();
         } else if self.playbackstatus == "Paused" {
-            self.playbackstatus = paused.to_string();
+            self.playbackstatus = paused.to_owned();
         }
 
         self
@@ -206,7 +206,7 @@ fn write_to_file(text: String) -> Result<(), Box<dyn Error>> {
 }
 
 /// Unpacks an incoming message when receiving a signal of PropertiesChanged from Spotify
-fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Box<dyn Error>> {
+fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, TypeMismatchError> {
     // Read the two first arguments of the received message
     let read_msg: (String, PropMap) = msg.read2()?;
 
@@ -214,7 +214,11 @@ fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Bo
     let map = read_msg.1;
 
     // Unwrap the string that tells us what kind of contents is in the message
-    let contents = map.keys().next().unwrap().as_str();
+    let contents = map
+        .keys()
+        .next()
+        .expect("Second key in contents should contain metadata or playbackstatus.")
+        .as_str();
 
     // Match the contents to perform the correct unpacking
     match contents {
@@ -222,24 +226,34 @@ fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Bo
         // Since  the metadata never contains any information about playbackstatus, we explicitly ask for it
         "Metadata" => {
             let metadata: &dyn RefArg = &map["Metadata"].0;
-            let map: &arg::PropMap = arg::cast(metadata).unwrap();
+            let map: &arg::PropMap =
+                arg::cast(metadata).expect("RefArg with metadata should be cast to PropMap");
             let song_title: Option<&String> = arg::prop_cast(map, "xesam:title");
             let song_artist: Option<&Vec<String>> = arg::prop_cast(map, "xesam:artist");
 
             Ok(Some(Song {
-                artist: song_artist.unwrap()[0].to_string(),
-                title: song_title.unwrap().to_string(),
-                playbackstatus: get_playbackstatus(conn).unwrap(),
+                artist: song_artist.expect("Correct metadata should contain an artist.")[0]
+                    .to_owned(),
+                title: song_title
+                    .expect("Correct metadata should contain a song title.")
+                    .to_owned(),
+                playbackstatus: get_playbackstatus(conn)
+                    .expect("Correct metadata should contain playbackstatus."),
             }))
         }
         // If we receive an update on PlaybackStatus we receive no infromation about artist or title
         // As above, no metadata is provided with the playbackstatus, so we have to get it ourselves
         "PlaybackStatus" => {
-            let artist_title = get_metadata(conn).unwrap();
+            let artist_title =
+                get_metadata(conn).expect("A currently playing song should have metadata.");
             Ok(Some(Song {
                 artist: artist_title.0,
                 title: artist_title.1,
-                playbackstatus: map["PlaybackStatus"].0.as_str().unwrap().to_string(),
+                playbackstatus: map["PlaybackStatus"]
+                    .0
+                    .as_str()
+                    .expect("Correct metadata should contain playbackstatus.")
+                    .to_owned(),
             }))
         }
         _ => Ok(None),
@@ -247,7 +261,7 @@ fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Bo
 }
 
 /// Gets the playbackstatus from Spotify
-fn get_playbackstatus(conn: &LocalConnection) -> Result<String, Box<dyn Error>> {
+fn get_playbackstatus(conn: &LocalConnection) -> Result<String, DBusError> {
     let message = dbus::Message::call_with_args(
         "org.mpris.MediaPlayer2.spotify",
         "/org/mpris/MediaPlayer2",
@@ -256,9 +270,7 @@ fn get_playbackstatus(conn: &LocalConnection) -> Result<String, Box<dyn Error>> 
         ("org.mpris.MediaPlayer2.Player", "PlaybackStatus"),
     );
 
-    let reply = conn
-        .send_with_reply_and_block(message, Duration::from_millis(5000))
-        .unwrap();
+    let reply = conn.send_with_reply_and_block(message, Duration::from_millis(5000))?;
 
     let playbackstatus: Variant<String> = reply.read1()?;
 
@@ -268,7 +280,7 @@ fn get_playbackstatus(conn: &LocalConnection) -> Result<String, Box<dyn Error>> 
 }
 
 /// Gets the currently playing artist and title from Spotify in a tuple: (artist, title)
-fn get_metadata(conn: &LocalConnection) -> Result<(String, String), Box<dyn Error>> {
+fn get_metadata(conn: &LocalConnection) -> Result<(String, String), DBusError> {
     let message = dbus::Message::call_with_args(
         "org.mpris.MediaPlayer2.spotify",
         "/org/mpris/MediaPlayer2",
@@ -308,7 +320,10 @@ fn send_update_signal(signal: u8) -> Result<(), Box<dyn Error>> {
 /// Check if the sender of a message is Spotify
 fn is_spotify(conn: &LocalConnection, msg: &Message) -> bool {
     // Extract the sender of our incoming message
-    let sender_id = msg.sender().unwrap().to_string();
+    let sender_id = msg
+        .sender()
+        .expect("A sender should have a valid id.")
+        .to_string();
 
     // Create a query with a method call to ask for the ID of Spotify
     let query = dbus::Message::call_with_args(
