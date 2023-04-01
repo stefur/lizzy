@@ -142,22 +142,27 @@ fn main() -> Result<()> {
         .with_sender("org.freedesktop.DBus")
         .with_type(Signal);
 
+    // Handles the incoming signals from  when properties change
     conn.add_match(properties_rule, move |_: (), conn, msg| {
-        let song = read_song_properties(conn, msg)
-            .expect("Failed to handle properties.")
-            .unwrap();
+        // Start by checking if the signal is indeed from Spotify
+        if is_spotify(conn, msg) {
+            // Unpack the song received from the signal to create an output
+            if let Ok(Some(song)) = unpack_song(conn, msg) {
+                let mut output = Output::new(song, &args.order, &args.separator);
 
-        let mut output = Output::new(song, &args.order, &args.separator);
+                // Customize the output
+                output
+                    .shorten(args.length)
+                    .escape_ampersand()
+                    .set_status(&args.playing, &args.paused)
+                    .colorize(&args.textcolor, &args.playbackcolor);
 
-        output
-            .shorten(args.length)
-            .escape_ampersand()
-            .set_status(&args.playing, &args.paused)
-            .colorize(&args.textcolor, &args.playbackcolor);
-
-        write_to_file(format!("{}{}", output.playbackstatus, output.now_playing))
-            .expect("Failed to write to file.");
-        send_update_signal(args.signal).expect("Failed to send update signal to Waybar.");
+                // Write out the output to file and update Waybar
+                write_to_file(format!("{}{}", output.playbackstatus, output.now_playing))
+                    .expect("Failed to write to file.");
+                send_update_signal(args.signal).expect("Failed to send update signal to Waybar.");
+            }
+        }
         true
     })?;
 
@@ -187,27 +192,6 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged> {
         _old_name: iter.read()?,
         new_name: iter.read()?,
     })
-}
-
-/// Function to handle the incoming signals from Spotify when properties change
-fn read_song_properties(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>> {
-    // First we try to get the ID of Spotify, as well as the ID of the signal sender
-    let spotify_id = get_spotify_id(conn);
-    let sender_id = msg.sender().unwrap().to_string();
-
-    // Check if it was indeed Spotify that sent the signal, otherwise we just return an Ok and do nothing else.
-    if let Ok(spotify_id) = spotify_id {
-        if spotify_id != Some(sender_id) {
-            return Ok(None);
-        }
-
-        // Unpack the song received from the signal
-        let song = unpack_song(conn, msg)?;
-
-        Ok(song)
-    } else {
-        Ok(None)
-    }
 }
 
 /// Writes out the finished output to a file that is then parsed by Waybar
@@ -318,10 +302,13 @@ fn send_update_signal(signal: u8) -> Result<()> {
     Ok(())
 }
 
-/// Gets the Spotify ID over DBus
-fn get_spotify_id(conn: &LocalConnection) -> Result<Option<String>> {
-    // Create a message with a method call to ask for the ID of Spotify
-    let message = dbus::Message::call_with_args(
+/// Check if the sender of a message is Spotify
+fn is_spotify(conn: &LocalConnection, msg: &Message) -> bool {
+    // Extract the sender of our incoming message
+    let sender_id = msg.sender().unwrap().to_string();
+
+    // Create a query with a method call to ask for the ID of Spotify
+    let query = dbus::Message::call_with_args(
         "org.freedesktop.DBus",
         "/",
         "org.freedesktop.DBus",
@@ -329,17 +316,17 @@ fn get_spotify_id(conn: &LocalConnection) -> Result<Option<String>> {
         ("org.mpris.MediaPlayer2.spotify",),
     );
 
-    // Send the message and await the reply
+    // Send the query and await the reply
     let reply: Result<Message, DBusError> =
-        conn.send_with_reply_and_block(message, Duration::from_millis(5000));
+        conn.send_with_reply_and_block(query, Duration::from_millis(5000));
 
     match reply {
         // If we get a reply, we unpack the ID from the message and return it
         Ok(reply) => {
-            let spotify_id: String = reply.read1()?;
-            Ok(Some(spotify_id))
+            let spotify_id: String = reply.read1().expect("msg");
+            spotify_id == sender_id
         }
-        // If Spotify is not running we'll receive an error in return, which is fine, so return None instead
-        Err(_reply) => Ok(None),
+        // If Spotify is not running we'll receive an error in return, which is fine, so return false
+        Err(_reply) => false,
     }
 }
