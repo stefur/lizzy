@@ -168,9 +168,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             "Read the nameowner from incoming message needs to be done to determine the change.",
         );
 
-        // If Spotify has been closed, clear the output by writing an empty string (for now)
-        if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name.is_empty() {
-            println!("");
+        match nameowner.name.as_str() {
+            // If Spotify has been closed, clear the output by writing an empty string (for now)
+            "org.mpris.MediaPlayer2.spotify" => {
+                if nameowner.new_name.is_empty() {
+                    println!();
+                }
+            }
+            // If Waybar closes, Lystra should exit
+            "fr.arouillard.waybar" => {
+                if nameowner.new_name.is_empty() {
+                    std::process::exit(0);
+                }
+            }
+            &_ => (),
         }
         true
     })?;
