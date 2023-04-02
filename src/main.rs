@@ -170,16 +170,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         match nameowner.name.as_str() {
             // If Spotify has been closed, clear the output by writing an empty string (for now)
-            "org.mpris.MediaPlayer2.spotify" => {
-                if nameowner.new_name.is_empty() {
-                    println!();
-                }
+            "org.mpris.MediaPlayer2.spotify" if nameowner.new_name.is_empty() => {
+                println!();
             }
             // If Waybar closes, Lystra should exit
-            "fr.arouillard.waybar" => {
-                if nameowner.new_name.is_empty() {
-                    std::process::exit(0);
-                }
+            "fr.arouillard.waybar" if nameowner.new_name.is_empty() => {
+                std::process::exit(0);
             }
             &_ => (),
         }
