@@ -6,7 +6,6 @@ FLAGS:
   -h, --help            Prints help information
 OPTIONS:
   --length NUMBER       Max length of the output before truncating      <Default: 45>
-  --signal NUMBER       Signal number used to update Waybar             <Default: 8>
   --playing STRING      Indicator used when a song is playing           <Default: Playing: >
   --paused STRING       Indicator used when a song is paused            <Default: Paused: >
   --separator STRING    A separator between song artist and title       <Default: - >

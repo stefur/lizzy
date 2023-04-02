@@ -1,7 +1,4 @@
 use std::error::Error;
-use std::fs::File;
-use std::io::Write;
-use std::process::Command;
 use std::time::Duration;
 
 use dbus::arg::{Iter, PropMap, RefArg, TypeMismatchError, Variant};
@@ -159,9 +156,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .colorize(&args.textcolor, &args.playbackcolor);
 
                 // Write out the output to file and update Waybar
-                write_to_file(format!("{}{}", output.playbackstatus, output.now_playing))
-                    .expect("Lystra needs to write output to file (/tmp/lystra_output.txt).");
-                send_update_signal(args.signal).expect("Failed to send update signal to Waybar.");
+                println!("{}{}", output.playbackstatus, output.now_playing)
             }
         }
         true
@@ -173,10 +168,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             "Read the nameowner from incoming message needs to be done to determine the change.",
         );
 
+        // If Spotify has been closed, clear the output by writing an empty string (for now)
         if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name.is_empty() {
-            write_to_file("".to_string()).expect("Need to clear output by writing to file.");
-            send_update_signal(args.signal)
-                .expect("Clearing the output should also trigger an update to Waybar.");
+            println!("");
         }
         true
     })?;
@@ -195,14 +189,6 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
         _old_name: iter.read()?,
         new_name: iter.read()?,
     })
-}
-
-/// Writes out the finished output to a file that is then parsed by Waybar
-fn write_to_file(text: String) -> Result<(), Box<dyn Error>> {
-    let text: &[u8] = text.as_bytes();
-    let mut file: File = File::create("/tmp/lystra_output.txt")?;
-    file.write_all(text)?;
-    Ok(())
 }
 
 /// Unpacks an incoming message when receiving a signal of PropertiesChanged from Spotify
@@ -303,18 +289,6 @@ fn get_metadata(conn: &LocalConnection) -> Result<(String, String), DBusError> {
     let result: (String, String) = (artist[0].to_owned(), title.to_owned());
 
     Ok(result)
-}
-
-/// Sends a signal to Waybar so that the output is updated
-fn send_update_signal(signal: u8) -> Result<(), Box<dyn Error>> {
-    let signal = format!("-RTMIN+{}", signal);
-
-    Command::new("pkill")
-        .arg(signal)
-        .arg("waybar")
-        .output()
-        .expect("Should be able to execute the command to update Waybar.");
-    Ok(())
 }
 
 /// Check if the sender of a message is Spotify
