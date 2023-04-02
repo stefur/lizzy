@@ -26,13 +26,13 @@ Currently the following options can be used to customize the output of Lystra.
 
 | Flag | Default value | Description |
 | --- | --- | --- |
-| `--length` | 40 | Set the length of the string before truncating the text (and adds …). |
-| `--playing` | "Playing: " | Set your own indicator for when a song is playing. |
-| `--paused` | "Paused: " | Set your own indicator for when a song is paused. |
-| `--separator` | " - " | Separator for *artist* and *title* in the output. |
-| `--order` | "artist,title" | Comma-separated setting with the keywords *artist* and *title* to set a desired order of the output. |
-| `--playbackcolor` | None | Optional color setting for the playback status indicator. |
-| `--textcolor` | None | Optional color setting for the artist and title text. |
+| `--length` | 45 | Max length of the output before truncating (adds … to output). |
+| `--playing` | "Playing: " | Indicator used when a song is playing. |
+| `--paused` | "Paused: " | Indicator used when a song is paused. |
+| `--separator` | " - " | Separator between song artist and title. |
+| `--order` | "artist,title" | The order of artist and title, comma-separated. |
+| `--playbackcolor` | None | Text color for artist and title. |
+| `--textcolor` | None | Text color for playback status. |
 
 ## Todo
 - Better and more examples of usage.
