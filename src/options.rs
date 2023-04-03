@@ -15,7 +15,6 @@ OPTIONS:
 ";
 pub struct Arguments {
     pub length: usize,
-    pub signal: u8,
     pub playing: String,
     pub paused: String,
     pub separator: String,
@@ -35,7 +34,6 @@ pub fn parse_args() -> Result<Arguments, pico_args::Error> {
 
     let args = Arguments {
         length: pargs.opt_value_from_str("--length")?.unwrap_or(45),
-        signal: pargs.opt_value_from_str("--signal")?.unwrap_or(8),
         playing: pargs
             .opt_value_from_str("--playing")?
             .unwrap_or(String::from("Playing: ")),
