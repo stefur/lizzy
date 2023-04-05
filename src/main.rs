@@ -1,4 +1,7 @@
 use std::error::Error;
+use std::fs::File;
+use std::io::Write;
+use std::process::Command;
 use std::time::Duration;
 
 use dbus::arg::{Iter, PropMap, RefArg, TypeMismatchError, Variant};
@@ -156,7 +159,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .colorize(&args.textcolor, &args.playbackcolor);
 
                 // Write out the output to file and update Waybar
-                println!("{}{}", output.playbackstatus, output.now_playing)
+                write_output(format!("{}{}", output.playbackstatus, output.now_playing))
+                    .expect("Lystra failed to write output to file.");
+                send_update_signal(args.signal).expect("Failed to send update signal to Waybar.");
             }
         }
         true
@@ -167,18 +172,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         let nameowner: NameOwnerChanged = read_nameowner(msg).expect(
             "Read the nameowner from incoming message needs to be done to determine the change.",
         );
-
-        match nameowner.name.as_str() {
-            // If Spotify has been closed, clear the output by writing an empty string (for now)
-            "org.mpris.MediaPlayer2.spotify" if nameowner.new_name.is_empty() => {
-                println!();
-            }
-            // If Waybar closes, Lystra should exit
-            "fr.arouillard.waybar" if nameowner.new_name.is_empty() => {
-                std::process::exit(0);
-            }
-            &_ => (),
+        // If Spotify has been closed, clear the output by writing an empty string (for now)
+        if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name.is_empty() {
+            write_output("".to_string()).expect("Need to clear output by writing to file.");
+            send_update_signal(args.signal)
+                .expect("Clearing the output should also trigger an update to Waybar.");
         }
+
         true
     })?;
 
@@ -330,4 +330,24 @@ fn is_spotify(conn: &LocalConnection, msg: &Message) -> bool {
         // If Spotify is not running we'll receive an error in return, which is fine, so return false
         Err(_reply) => false,
     }
+}
+
+/// Sends a signal to Waybar so that the output is updated
+fn send_update_signal(signal: u8) -> Result<(), Box<dyn Error>> {
+    let signal = format!("-RTMIN+{}", signal);
+
+    Command::new("pkill")
+        .arg(signal)
+        .arg("waybar")
+        .output()
+        .expect("Failed to execute the command to update Waybar.");
+    Ok(())
+}
+
+/// Writes out the finished output to a file that is then parsed by Waybar
+fn write_output(text: String) -> Result<(), Box<dyn Error>> {
+    let text: &[u8] = text.as_bytes();
+    let mut file: File = File::create("/tmp/lystra-output")?;
+    file.write_all(text)?;
+    Ok(())
 }

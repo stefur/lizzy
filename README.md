@@ -14,10 +14,14 @@ Simple examples of its output here:
 Add a custom module to your Waybar config:  
 ```
 "custom/spotify": {
-    "exec": "lystra <OPTIONS HERE>"
+    "exec": "cat /tmp/lystra-output"
+    "interval": "once",
+    "signal": 8
 }
 ```  
 Don't forget to add the module to your bar!
+
+Then run `lystra`, and preferably add `lystra` to whatever autostart method you're using.
 
 ## Usage
 Currently the following options can be used to customize the output of Lystra.
@@ -25,15 +29,15 @@ Currently the following options can be used to customize the output of Lystra.
 | Flag | Default value | Description |
 | --- | --- | --- |
 | `--length` | 45 | Max length of the output before truncating (adds … to output). |
+| `--signal` | 8 | Set a custom signal number used to update Waybar. |
 | `--playing` | "Playing: " | Indicator used when a song is playing. |
 | `--paused` | "Paused: " | Indicator used when a song is paused. |
 | `--separator` | " - " | Separator between song artist and title. |
 | `--order` | "artist,title" | The order of artist and title, comma-separated. |
-| `--playbackcolor` | None | Text color for playback status.. |
+| `--playbackcolor` | None | Text color for playback status. |
 | `--textcolor` | None | Text color for artist and title. |
 
 ## Todo
 - Better and more examples of usage.
 - Make a release.
-- Look into more interfaces (media players)
-- Consider combining playing/paused args
+- Look into supporting more interfaces (media players).
