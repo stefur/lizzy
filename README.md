@@ -2,9 +2,10 @@
 
 Lystra is a simple and small app that lets [Waybar](https://github.com/Alexays/Waybar) display what is currently playing on Spotify. Lystra listens to DBus signals emitted by Spotify.
 
-Simple examples of its output here:  
-![](assets/preview1.png)  
-![](assets/preview2.png)
+Some examples of its output here:  
+<p align="center">
+    <img src="assets/examples.png" alt="Examples">
+</p>
 
 ## Installation from source
 1. Make sure you've got Rust installed. Either via your distributions package manager or [`rustup`](https://rustup.rs/).
@@ -14,7 +15,7 @@ Simple examples of its output here:
 Add a custom module to your Waybar config:  
 ```
 "custom/spotify": {
-    "exec": "cat /tmp/lystra-output"
+    "exec": "cat /tmp/lystra-output",
     "interval": "once",
     "signal": 8
 }
@@ -38,6 +39,6 @@ Currently the following options can be used to customize the output of Lystra.
 | `--textcolor` | None | Text color for artist and title. |
 
 ## Todo
-- Better and more examples of usage.
+- ~~Better and more examples of usage~~.
 - Make a release.
 - Look into supporting more interfaces (media players).
