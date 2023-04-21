@@ -15,6 +15,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+     - name: Install dependencies
+        run: |
+          apt update
+          apt-get install -y --no-install-recommends \
+            libdbus-1-dev \
+            pkg-config
     - uses: actions/checkout@v3
     - name: Build
       run: cargo build --verbose
