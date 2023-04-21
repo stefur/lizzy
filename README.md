@@ -40,5 +40,6 @@ Currently the following options can be used to customize the output of Lystra.
 
 ## Todo
 - ~~Better and more examples of usage~~.
-- Make a release.
+- ~~Make a release~~.
 - Look into supporting more interfaces (media players).
+- Feature: autopause/resume when other player begins playing.
