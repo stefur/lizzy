@@ -13,6 +13,7 @@ OPTIONS:
   --order STRING        The order of artist and title, comma-separated  <Default: artist,title>
   --textcolor STRING    Text color for artist and title                 <Default: None>
   --textcolor STRING    Text color for playback status                  <Default: None>
+  --mediaplayer STRING  Mediaplayer interface to pick up signals from   <Default: None>
 ";
 
 #[derive(Clone)]
