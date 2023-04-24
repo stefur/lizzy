@@ -1,7 +1,9 @@
 # Lystra
 
-Lystra is a simple and small app that lets [Waybar](https://github.com/Alexays/Waybar) display what is currently playing on Spotify. Lystra listens to DBus signals emitted by Spotify.
-
+Lystra is a simple and small app that lets [Waybar](https://github.com/Alexays/Waybar) display what you're currently listening to by using DBus signals.
+  
+Lystra supports any mediaplayer supporting [MPRIS](https://wiki.archlinux.org/title/MPRIS).
+  
 Some examples of its output here:  
 <p align="center">
     <img src="assets/examples.png" alt="Examples">
@@ -37,9 +39,13 @@ Currently the following options can be used to customize the output of Lystra.
 | `--order` | "artist,title" | The order of artist and title, comma-separated. |
 | `--playbackcolor` | None | Text color for playback status. |
 | `--textcolor` | None | Text color for artist and title. |
+| `--mediaplayer`| None | Mediaplayer interface that Lystra should listen to. Usually the name of the mediaplayer. Blank means listening to all mediaplayers. |
+
+## Example
+`lystra --playing "契 " --paused " " --playbackcolor "#9CABCA" --separator ": " --order "title,artist" --mediaplayer "spotify"`
 
 ## Todo
 - ~~Better and more examples of usage~~.
 - ~~Make a release~~.
-- Look into supporting more interfaces (media players).
+- ~~Look into supporting more interfaces (media players)~~.
 - Feature: autopause/resume when other player begins playing.

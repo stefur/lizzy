@@ -119,13 +119,16 @@ impl Output {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let args: options::Arguments = match options::parse_args() {
+    // Parse the options for use within the match rule for property changes
+    let properties_opts: options::Arguments = match options::parse_args() {
         Ok(value) => value,
         Err(err) => {
             eprintln!("Error: {}", err);
             std::process::exit(1);
         }
     };
+    // And a clone used for nameowner changes
+    let nameowner_opts = properties_opts.clone();
 
     let conn =
         LocalConnection::new_session().expect("Lystra should be able to connect to session bus.");
@@ -145,23 +148,26 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Handles the incoming signals from  when properties change
     conn.add_match(properties_rule, move |_: (), conn, msg| {
-        // Start by checking if the signal is indeed from Spotify
-        if is_spotify(conn, msg) {
+        // Start by checking if the signal is indeed from the mediaplayer we want
+
+        if is_mediaplayer(conn, msg, &properties_opts.mediaplayer) {
             // Unpack the song received from the signal to create an output
             if let Ok(Some(song)) = unpack_song(conn, msg) {
-                let mut output = Output::new(song, &args.order, &args.separator);
+                let mut output =
+                    Output::new(song, &properties_opts.order, &properties_opts.separator);
 
                 // Customize the output
                 output
-                    .shorten(args.length)
+                    .shorten(properties_opts.length)
                     .escape_ampersand()
-                    .set_status(&args.playing, &args.paused)
-                    .colorize(&args.textcolor, &args.playbackcolor);
+                    .set_status(&properties_opts.playing, &properties_opts.paused)
+                    .colorize(&properties_opts.textcolor, &properties_opts.playbackcolor);
 
                 // Write out the output to file and update Waybar
                 write_output(format!("{}{}", output.playbackstatus, output.now_playing))
                     .expect("Lystra failed to write output to file.");
-                send_update_signal(args.signal).expect("Failed to send update signal to Waybar.");
+                send_update_signal(properties_opts.signal)
+                    .expect("Failed to send update signal to Waybar.");
             }
         }
         true
@@ -169,13 +175,25 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Handles any incoming messages when a nameowner has changed.
     conn.add_match(nameowner_rule, move |_: (), _, msg| {
+        // Not a very pretty solution, but if we listen to signals coming from all mediaplayers,
+        // we never clear the output to avoid clearing the output in error due to mediaplayers closing
+        if nameowner_opts.mediaplayer.is_empty() {
+            return true;
+        }
+
         let nameowner: NameOwnerChanged = read_nameowner(msg).expect(
             "Read the nameowner from incoming message needs to be done to determine the change.",
         );
-        // If Spotify has been closed, clear the output by writing an empty string (for now)
-        if nameowner.name == "org.mpris.MediaPlayer2.spotify" && nameowner.new_name.is_empty() {
+
+        // If mediaplayer has been closed, clear the output by writing an empty string (for now)
+        if nameowner
+            .name
+            .to_lowercase()
+            .contains(nameowner_opts.mediaplayer.as_str())
+            && nameowner.new_name.is_empty()
+        {
             write_output("".to_string()).expect("Need to clear output by writing to file.");
-            send_update_signal(args.signal)
+            send_update_signal(nameowner_opts.signal)
                 .expect("Clearing the output should also trigger an update to Waybar.");
         }
 
@@ -198,10 +216,15 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
     })
 }
 
-/// Unpacks an incoming message when receiving a signal of PropertiesChanged from Spotify
+/// Unpacks an incoming message when receiving a signal of PropertiesChanged from mediaplayer
 fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, TypeMismatchError> {
     // Read the two first arguments of the received message
     let read_msg: (String, PropMap) = msg.read2()?;
+
+    let sender_id = msg
+        .sender()
+        .expect("A sender should have a valid id.")
+        .to_string();
 
     // Get the HashMap from the second argument, which contains the relevant info
     let map = read_msg.1;
@@ -230,15 +253,15 @@ fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Ty
                 title: song_title
                     .expect("Correct metadata should contain a song title.")
                     .to_owned(),
-                playbackstatus: get_playbackstatus(conn)
+                playbackstatus: get_playbackstatus(conn, sender_id)
                     .expect("Correct metadata should contain playbackstatus."),
             }))
         }
         // If we receive an update on PlaybackStatus we receive no infromation about artist or title
         // As above, no metadata is provided with the playbackstatus, so we have to get it ourselves
         "PlaybackStatus" => {
-            let artist_title =
-                get_metadata(conn).expect("A currently playing song should have metadata.");
+            let artist_title = get_metadata(conn, sender_id)
+                .expect("A currently playing song should have metadata.");
             Ok(Some(Song {
                 artist: artist_title.0,
                 title: artist_title.1,
@@ -253,10 +276,10 @@ fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Ty
     }
 }
 
-/// Gets the playbackstatus from Spotify
-fn get_playbackstatus(conn: &LocalConnection) -> Result<String, DBusError> {
+/// Gets the playbackstatus from the mediaplayer
+fn get_playbackstatus(conn: &LocalConnection, mediaplayer: String) -> Result<String, DBusError> {
     let message = dbus::Message::call_with_args(
-        "org.mpris.MediaPlayer2.spotify",
+        mediaplayer,
         "/org/mpris/MediaPlayer2",
         "org.freedesktop.DBus.Properties",
         "Get",
@@ -272,10 +295,13 @@ fn get_playbackstatus(conn: &LocalConnection) -> Result<String, DBusError> {
     Ok(result)
 }
 
-/// Gets the currently playing artist and title from Spotify in a tuple: (artist, title)
-fn get_metadata(conn: &LocalConnection) -> Result<(String, String), DBusError> {
+/// Gets the currently playing artist and title from the mediaplayer in a tuple: (artist, title)
+fn get_metadata(
+    conn: &LocalConnection,
+    mediaplayer: String,
+) -> Result<(String, String), DBusError> {
     let message = dbus::Message::call_with_args(
-        "org.mpris.MediaPlayer2.spotify",
+        mediaplayer,
         "/org/mpris/MediaPlayer2",
         "org.freedesktop.DBus.Properties",
         "Get",
@@ -298,21 +324,26 @@ fn get_metadata(conn: &LocalConnection) -> Result<(String, String), DBusError> {
     Ok(result)
 }
 
-/// Check if the sender of a message is Spotify
-fn is_spotify(conn: &LocalConnection, msg: &Message) -> bool {
+/// Check if the sender of a message is the mediaplayer we're listening to
+fn is_mediaplayer(conn: &LocalConnection, msg: &Message, mediaplayer: &String) -> bool {
+    // If mediaplayer option is blank, we listen to all incoming signals and thus return true
+    if mediaplayer.is_empty() {
+        return true;
+    }
+
     // Extract the sender of our incoming message
     let sender_id = msg
         .sender()
         .expect("A sender should have a valid id.")
         .to_string();
 
-    // Create a query with a method call to ask for the ID of Spotify
+    // Create a query with a method call to ask for the ID of the mediaplayer
     let query = dbus::Message::call_with_args(
         "org.freedesktop.DBus",
         "/",
         "org.freedesktop.DBus",
         "GetNameOwner",
-        ("org.mpris.MediaPlayer2.spotify",),
+        (format!("org.mpris.MediaPlayer2.{}", mediaplayer),),
     );
 
     // Send the query and await the reply
@@ -322,12 +353,12 @@ fn is_spotify(conn: &LocalConnection, msg: &Message) -> bool {
     match reply {
         // If we get a reply, we unpack the ID from the message and return it
         Ok(reply) => {
-            let spotify_id: String = reply
+            let mediaplayer_id: String = reply
                 .read1()
-                .expect("Spotify ID should be a string in the first argument of the message");
-            spotify_id == sender_id
+                .expect("Mediaplayer ID should be a string in the first argument of the message");
+            mediaplayer_id == sender_id
         }
-        // If Spotify is not running we'll receive an error in return, which is fine, so return false
+        // If the message is not from the mediaplayer we're listening to we'll receive an error in return, which is fine, so return false
         Err(_reply) => false,
     }
 }

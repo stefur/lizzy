@@ -14,6 +14,8 @@ OPTIONS:
   --textcolor STRING    Text color for artist and title                 <Default: None>
   --textcolor STRING    Text color for playback status                  <Default: None>
 ";
+
+#[derive(Clone)]
 pub struct Arguments {
     pub length: usize,
     pub signal: u8,
@@ -23,6 +25,7 @@ pub struct Arguments {
     pub order: String,
     pub textcolor: String,
     pub playbackcolor: String,
+    pub mediaplayer: String,
 }
 
 pub fn parse_args() -> Result<Arguments, pico_args::Error> {
@@ -54,6 +57,9 @@ pub fn parse_args() -> Result<Arguments, pico_args::Error> {
             .unwrap_or(String::from("")),
         playbackcolor: pargs
             .opt_value_from_str("--playbackcolor")?
+            .unwrap_or(String::from("")),
+        mediaplayer: pargs
+            .opt_value_from_str("--mediaplayer")?
             .unwrap_or(String::from("")),
     };
 
