@@ -253,14 +253,14 @@ fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Ty
                 title: song_title
                     .expect("Correct metadata should contain a song title.")
                     .to_owned(),
-                playbackstatus: get_playbackstatus(conn, sender_id)
+                playbackstatus: get_playbackstatus(conn, &sender_id)
                     .expect("Correct metadata should contain playbackstatus."),
             }))
         }
         // If we receive an update on PlaybackStatus we receive no infromation about artist or title
         // As above, no metadata is provided with the playbackstatus, so we have to get it ourselves
         "PlaybackStatus" => {
-            let artist_title = get_metadata(conn, sender_id)
+            let artist_title = get_metadata(conn, &sender_id)
                 .expect("A currently playing song should have metadata.");
             Ok(Some(Song {
                 artist: artist_title.0,
@@ -276,8 +276,27 @@ fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Ty
     }
 }
 
+// Calls a method on the interface to play or pause what is currently playing
+fn toggle_playback(
+    conn: &LocalConnection,
+    mediaplayer: &String,
+    cmd: &str,
+) -> Result<(), DBusError> {
+    let message = dbus::Message::new_method_call(
+        mediaplayer,
+        "/org/mpris/MediaPlayer2",
+        "org.mpris.MediaPlayer2.Player",
+        cmd,
+    )
+    .expect("Tried to create a message with method call to toggle playback");
+
+    conn.send_with_reply_and_block(message, Duration::from_millis(5000))?;
+
+    Ok(())
+}
+
 /// Gets the playbackstatus from the mediaplayer
-fn get_playbackstatus(conn: &LocalConnection, mediaplayer: String) -> Result<String, DBusError> {
+fn get_playbackstatus(conn: &LocalConnection, mediaplayer: &String) -> Result<String, DBusError> {
     let message = dbus::Message::call_with_args(
         mediaplayer,
         "/org/mpris/MediaPlayer2",
@@ -298,7 +317,7 @@ fn get_playbackstatus(conn: &LocalConnection, mediaplayer: String) -> Result<Str
 /// Gets the currently playing artist and title from the mediaplayer in a tuple: (artist, title)
 fn get_metadata(
     conn: &LocalConnection,
-    mediaplayer: String,
+    mediaplayer: &String,
 ) -> Result<(String, String), DBusError> {
     let message = dbus::Message::call_with_args(
         mediaplayer,
@@ -356,7 +375,29 @@ fn is_mediaplayer(conn: &LocalConnection, msg: &Message, mediaplayer: &String) -
             let mediaplayer_id: String = reply
                 .read1()
                 .expect("Mediaplayer ID should be a string in the first argument of the message");
-            mediaplayer_id == sender_id
+
+            if mediaplayer_id == sender_id {
+                // True if mediaplayer id matches the sender
+                true
+            } else {
+                // If the signal is coming from another player we ask for the playbackstatus form the sender
+                // For situations where getting playbackstatus fails, we just silently ignore it and return false as expected.
+
+                let Ok(sender_playbackstatus) = get_playbackstatus(conn, &sender_id) else { return false };
+
+                match sender_playbackstatus.as_str() {
+                    "Playing" => {
+                        toggle_playback(conn, &mediaplayer_id, "Pause")
+                            .expect("Calling the pause method failed.");
+                    }
+                    "Paused" => {
+                        toggle_playback(conn, &mediaplayer_id, "Play")
+                            .expect("Calling the play method failed.");
+                    }
+                    _ => (),
+                }
+                false
+            }
         }
         // If the message is not from the mediaplayer we're listening to we'll receive an error in return, which is fine, so return false
         Err(_reply) => false,
