@@ -169,6 +169,24 @@ fn main() -> Result<(), Box<dyn Error>> {
                 send_update_signal(properties_opts.signal)
                     .expect("Failed to send update signal to Waybar.");
             }
+        } else {
+            // Check if our mediaplayer is running and has an ID so that we can toggle playback
+            if let Some(mediaplayer) = query_id(conn, &properties_opts.mediaplayer) {
+                // We use the unpack function to get the playback status
+                let Ok(Some(other_media)) = unpack_song(conn, msg) else { return true };
+
+                match other_media.playbackstatus.as_str() {
+                    "Playing" => {
+                        toggle_playback(conn, &mediaplayer, "Pause")
+                            .expect("Calling the pause method failed.");
+                    }
+                    "Paused" => {
+                        toggle_playback(conn, &mediaplayer, "Play")
+                            .expect("Calling the play method failed.");
+                    }
+                    _ => return true,
+                }
+            }
         }
         true
     })?;
@@ -216,15 +234,20 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
     })
 }
 
+fn get_sender_id(msg: &Message) -> String {
+    let sender_id = msg
+        .sender()
+        .expect("A message should have a sender.")
+        .to_string();
+    sender_id
+}
+
 /// Unpacks an incoming message when receiving a signal of PropertiesChanged from mediaplayer
 fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, TypeMismatchError> {
     // Read the two first arguments of the received message
     let read_msg: (String, PropMap) = msg.read2()?;
 
-    let sender_id = msg
-        .sender()
-        .expect("A sender should have a valid id.")
-        .to_string();
+    let sender_id = get_sender_id(msg);
 
     // Get the HashMap from the second argument, which contains the relevant info
     let map = read_msg.1;
@@ -343,19 +366,7 @@ fn get_metadata(
     Ok(result)
 }
 
-/// Check if the sender of a message is the mediaplayer we're listening to
-fn is_mediaplayer(conn: &LocalConnection, msg: &Message, mediaplayer: &String) -> bool {
-    // If mediaplayer option is blank, we listen to all incoming signals and thus return true
-    if mediaplayer.is_empty() {
-        return true;
-    }
-
-    // Extract the sender of our incoming message
-    let sender_id = msg
-        .sender()
-        .expect("A sender should have a valid id.")
-        .to_string();
-
+fn query_id(conn: &LocalConnection, mediaplayer: &String) -> Option<String> {
     // Create a query with a method call to ask for the ID of the mediaplayer
     let query = dbus::Message::call_with_args(
         "org.freedesktop.DBus",
@@ -376,31 +387,29 @@ fn is_mediaplayer(conn: &LocalConnection, msg: &Message, mediaplayer: &String) -
                 .read1()
                 .expect("Mediaplayer ID should be a string in the first argument of the message");
 
-            if mediaplayer_id == sender_id {
-                // True if mediaplayer id matches the sender
-                true
-            } else {
-                // If the signal is coming from another player we ask for the playbackstatus form the sender
-                // For situations where getting playbackstatus fails, we just silently ignore it and return false as expected.
-
-                let Ok(sender_playbackstatus) = get_playbackstatus(conn, &sender_id) else { return false };
-
-                match sender_playbackstatus.as_str() {
-                    "Playing" => {
-                        toggle_playback(conn, &mediaplayer_id, "Pause")
-                            .expect("Calling the pause method failed.");
-                    }
-                    "Paused" => {
-                        toggle_playback(conn, &mediaplayer_id, "Play")
-                            .expect("Calling the play method failed.");
-                    }
-                    _ => (),
-                }
-                false
-            }
+            Some(mediaplayer_id)
         }
+
         // If the message is not from the mediaplayer we're listening to we'll receive an error in return, which is fine, so return false
-        Err(_reply) => false,
+        Err(_reply) => None,
+    }
+}
+
+/// Check if the sender of a message is the mediaplayer we're listening to
+fn is_mediaplayer(conn: &LocalConnection, msg: &Message, mediaplayer: &String) -> bool {
+    // If mediaplayer option is blank, we listen to all incoming signals and thus return true
+    if mediaplayer.is_empty() {
+        return true;
+    }
+
+    // Extract the sender of our incoming message
+    let sender_id = get_sender_id(msg);
+
+    // Send the query and await the reply
+    if let Some(mediaplayer_id) = query_id(conn, mediaplayer) {
+        sender_id == mediaplayer_id
+    } else {
+        false
     }
 }
 
