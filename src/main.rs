@@ -174,10 +174,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             if let Some(mediaplayer) = query_id(conn, &properties_opts.mediaplayer) {
 
                 // If the other mediaplayer wasn't closed after sending its signal we try to unpack the message
-                let Ok(Some(other_media)) = unpack_song(conn, msg) else { 
-                    println!("Failed to unpack message from other mediaplayer, and therefore cannot toggle playback.");
+                let Ok(Some(other_media)) = unpack_song(conn, msg) else { println!("Failed to unpack message from other mediaplayer: cannot toggle playback.");
                     return true };
-                
                 match other_media.playbackstatus.as_str() {
                     "Playing" => {
                         toggle_playback(conn, &mediaplayer, "Pause")
@@ -192,7 +190,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         return true
                     }
                 }
-            } 
+            }
         }
         true
     })?;
@@ -276,21 +274,22 @@ fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Ty
             let song_title: Option<&String> = arg::prop_cast(map, "xesam:title");
             let song_artist: Option<&Vec<String>> = arg::prop_cast(map, "xesam:artist");
 
-            Ok(Some(Song {
-                artist: song_artist.expect("Correct metadata should contain an artist.")[0]
-                    .to_owned(),
-                title: song_title
-                    .expect("Correct metadata should contain a song title.")
-                    .to_owned(),
-                playbackstatus: get_playbackstatus(conn, &sender_id)
-                    .expect("Correct metadata should contain playbackstatus."),
-            }))
+            if let (Some(song_title), Some(song_artist)) = (song_title, song_artist) {
+                Ok(Some(Song {
+                    artist: song_artist[0].to_owned(),
+                    title: song_title.to_owned(),
+                    playbackstatus: get_playbackstatus(conn, &sender_id).unwrap_or("".to_string()),
+                }))
+            } else {
+                Ok(None)
+            }
         }
+
         // If we receive an update on PlaybackStatus we receive no infromation about artist or title
         // As above, no metadata is provided with the playbackstatus, so we have to get it ourselves
         "PlaybackStatus" => {
-            let artist_title = get_metadata(conn, &sender_id)
-                .expect("A currently playing song should have metadata.");
+            let artist_title =
+                get_metadata(conn, &sender_id).unwrap_or(("".to_string(), "".to_string()));
             Ok(Some(Song {
                 artist: artist_title.0,
                 title: artist_title.1,
@@ -325,7 +324,7 @@ fn toggle_playback(
 }
 
 /// Gets the playbackstatus from the mediaplayer
-fn get_playbackstatus(conn: &LocalConnection, mediaplayer: &String) -> Result<String, DBusError> {
+fn get_playbackstatus(conn: &LocalConnection, mediaplayer: &String) -> Option<String> {
     let message = dbus::Message::call_with_args(
         mediaplayer,
         "/org/mpris/MediaPlayer2",
@@ -334,20 +333,24 @@ fn get_playbackstatus(conn: &LocalConnection, mediaplayer: &String) -> Result<St
         ("org.mpris.MediaPlayer2.Player", "PlaybackStatus"),
     );
 
-    let reply = conn.send_with_reply_and_block(message, Duration::from_millis(5000))?;
+    let reply: Result<Message, DBusError> =
+        conn.send_with_reply_and_block(message, Duration::from_millis(5000));
 
-    let playbackstatus: Variant<String> = reply.read1()?;
+    match reply {
+        Ok(reply) => {
+            // Unpack the playback status, or return an empty string which is rare, but happens
+            let result: Variant<String> = reply.read1().unwrap_or(Variant("".to_string()));
 
-    let result = playbackstatus.0;
-
-    Ok(result)
+            Some(result.0)
+        }
+        // Silently return none in case we receive an error in return.
+        // This is usually cause the mediaplayer closed after the signal was sent.
+        Err(_err) => None,
+    }
 }
 
 /// Gets the currently playing artist and title from the mediaplayer in a tuple: (artist, title)
-fn get_metadata(
-    conn: &LocalConnection,
-    mediaplayer: &String,
-) -> Result<(String, String), DBusError> {
+fn get_metadata(conn: &LocalConnection, mediaplayer: &String) -> Option<(String, String)> {
     let message = dbus::Message::call_with_args(
         mediaplayer,
         "/org/mpris/MediaPlayer2",
@@ -356,20 +359,39 @@ fn get_metadata(
         ("org.mpris.MediaPlayer2.Player", "Metadata"),
     );
 
-    let reply = conn.send_with_reply_and_block(message, Duration::from_millis(5000))?;
+    let reply: Result<Message, DBusError> =
+        conn.send_with_reply_and_block(message, Duration::from_millis(5000));
 
-    let metadata: Variant<PropMap> = reply.read1()?;
+    match reply {
+        Ok(reply) => {
+            let metadata: Result<Variant<PropMap>, TypeMismatchError> = reply.read1();
 
-    let properties: PropMap = metadata.0;
+            match metadata {
+                Ok(metadata) => {
+                    let properties: PropMap = metadata.0;
+                    let title: &String = arg::prop_cast(&properties, "xesam:title")
+                        .expect("The song title should be present and extracted from the message.");
+                    let artist: &Vec<String> = arg::prop_cast(&properties, "xesam:artist").expect(
+                        "The song artist should be present and extracted from the message.",
+                    );
+                    let result: (String, String) = (artist[0].to_owned(), title.to_owned());
 
-    let title: &String = arg::prop_cast(&properties, "xesam:title")
-        .expect("The song title should be present and extracted from the message.");
-    let artist: &Vec<String> = arg::prop_cast(&properties, "xesam:artist")
-        .expect("The song artist should be present and extracted from the message.");
+                    Some(result)
+                }
 
-    let result: (String, String) = (artist[0].to_owned(), title.to_owned());
-
-    Ok(result)
+                Err(err) => {
+                    // We print an error message if there is an issue with parsing the reply.
+                    // Returning none, no need to panic. This should rarely, if ever, happen.
+                    // Error might still be useful though.
+                    eprintln!("Failed to get metadata. Error: {}", err);
+                    None
+                }
+            }
+        }
+        // Silently return none in case we receive an error in return.
+        // This is usually cause the mediaplayer closed after the signal was sent.
+        Err(_err) => None,
+    }
 }
 
 /// Create a query with a method call to ask for the ID of the mediaplayer
