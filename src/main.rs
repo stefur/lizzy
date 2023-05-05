@@ -170,23 +170,29 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .expect("Failed to send update signal to Waybar.");
             }
         } else {
-            // Check if our mediaplayer is running and has an ID so that we can toggle playback
+            // First we check that our mediaplayer is even running
             if let Some(mediaplayer) = query_id(conn, &properties_opts.mediaplayer) {
-                // We use the unpack function to get the playback status
-                let Ok(Some(other_media)) = unpack_song(conn, msg) else { return true };
 
+                // If the other mediaplayer wasn't closed after sending its signal we try to unpack the message
+                let Ok(Some(other_media)) = unpack_song(conn, msg) else { 
+                    println!("Failed to unpack message from other mediaplayer, and therefore cannot toggle playback.");
+                    return true };
+                
                 match other_media.playbackstatus.as_str() {
                     "Playing" => {
                         toggle_playback(conn, &mediaplayer, "Pause")
                             .expect("Calling the pause method failed.");
                     }
-                    "Paused" => {
+                    "Paused" | "Stopped" | "" => {
                         toggle_playback(conn, &mediaplayer, "Play")
                             .expect("Calling the play method failed.");
                     }
-                    _ => return true,
+                    _ => {
+                        println!("Failed to match the playbackstatus");
+                        return true
+                    }
                 }
-            }
+            } 
         }
         true
     })?;
@@ -233,7 +239,7 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
         new_name: iter.read()?,
     })
 }
-
+/// Unpack the sender id from a message
 fn get_sender_id(msg: &Message) -> String {
     let sender_id = msg
         .sender()
@@ -299,7 +305,7 @@ fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, Ty
     }
 }
 
-// Calls a method on the interface to play or pause what is currently playing
+/// Calls a method on the interface to play or pause what is currently playing
 fn toggle_playback(
     conn: &LocalConnection,
     mediaplayer: &String,
@@ -366,8 +372,8 @@ fn get_metadata(
     Ok(result)
 }
 
+/// Create a query with a method call to ask for the ID of the mediaplayer
 fn query_id(conn: &LocalConnection, mediaplayer: &String) -> Option<String> {
-    // Create a query with a method call to ask for the ID of the mediaplayer
     let query = dbus::Message::call_with_args(
         "org.freedesktop.DBus",
         "/",
