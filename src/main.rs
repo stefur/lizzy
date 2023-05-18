@@ -1,3 +1,4 @@
+use core::panic;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
@@ -7,6 +8,7 @@ use std::time::Duration;
 use dbus::arg::{Iter, PropMap, RefArg, TypeMismatchError, Variant};
 use dbus::blocking::BlockingSender;
 use dbus::message::MatchRule;
+use dbus::strings::BusName;
 use dbus::Error as DBusError;
 use dbus::Message;
 use dbus::MessageType::Signal;
@@ -21,14 +23,22 @@ struct NameOwnerChanged {
 }
 
 struct Song {
-    artist: String,
-    title: String,
+    artist: Option<String>,
+    title: Option<String>,
     playbackstatus: String,
 }
 
 struct Output {
     now_playing: String,
     playbackstatus: String,
+}
+
+enum Contents {
+    PlaybackStatus(Option<String>),
+    Metadata {
+        artist: Option<Vec<String>>,
+        title: Option<String>,
+    },
 }
 
 impl Output {
@@ -40,10 +50,10 @@ impl Output {
         for (i, s) in order.enumerate() {
             match s {
                 "artist" => {
-                    order_set[i] = Some(song.artist.as_str());
+                    order_set[i] = song.artist.as_deref();
                 }
                 "title" => {
-                    order_set[i] = Some(song.title.as_str());
+                    order_set[i] = song.title.as_deref();
                 }
                 _ => (),
             }
@@ -149,46 +159,69 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Handles the incoming signals from  when properties change
     conn.add_match(properties_rule, move |_: (), conn, msg| {
         // Start by checking if the signal is indeed from the mediaplayer we want
-
         if is_mediaplayer(conn, msg, &properties_opts.mediaplayer) {
             // Unpack the song received from the signal to create an output
-            if let Ok(Some(song)) = unpack_song(conn, msg) {
-                let mut output =
-                    Output::new(song, &properties_opts.order, &properties_opts.separator);
+            let contents = parse_message(msg);
 
-                // Customize the output
-                output
-                    .shorten(properties_opts.length)
-                    .escape_ampersand()
-                    .set_status(&properties_opts.playing, &properties_opts.paused)
-                    .colorize(&properties_opts.textcolor, &properties_opts.playbackcolor);
+            let song: Song = match contents {
+                Some(Contents::Metadata { artist, title }) => Song {
+                    artist: artist.unwrap_or_default().get(0).cloned(),
+                    title,
+                    playbackstatus: get_property(conn, msg.sender(), "PlaybackStatus")
+                        .0
+                        .unwrap_or_default(),
+                },
+                Some(Contents::PlaybackStatus(status)) => {
+                    let metadata = get_property(conn, msg.sender(), "Metadata");
+                    Song {
+                        artist: metadata.0,
+                        title: metadata.1,
+                        playbackstatus: status.unwrap_or_default(),
+                    }
+                }
+                None => {
+                    // Just return if we fail to find a match.
+                    // For now this assumes messages we're not interested in.
+                    return true;
+                }
+            };
 
-                // Write out the output to file and update Waybar
-                write_output(format!("{}{}", output.playbackstatus, output.now_playing))
-                    .expect("Lystra failed to write output to file.");
-                send_update_signal(properties_opts.signal)
-                    .expect("Failed to send update signal to Waybar.");
-            }
+            // Create an output from the song
+            let mut output = Output::new(song, &properties_opts.order, &properties_opts.separator);
+
+            // Customize the output
+            output
+                .shorten(properties_opts.length)
+                .escape_ampersand()
+                .set_status(&properties_opts.playing, &properties_opts.paused)
+                .colorize(&properties_opts.textcolor, &properties_opts.playbackcolor);
+
+            // Write out the output to file and update Waybar
+            write_output(format!("{}{}", output.playbackstatus, output.now_playing));
+            send_update_signal(properties_opts.signal);
         } else {
             // First we check that our mediaplayer is even running
             if let Some(mediaplayer) = query_id(conn, &properties_opts.mediaplayer) {
-
-                // If the other mediaplayer wasn't closed after sending its signal we try to unpack the message
-                let Ok(Some(other_media)) = unpack_song(conn, msg) else { println!("Failed to unpack message from other mediaplayer: cannot toggle playback.");
-                    return true };
-                match other_media.playbackstatus.as_str() {
-                    "Playing" => {
-                        toggle_playback(conn, &mediaplayer, "Pause")
-                            .expect("Calling the pause method failed.");
+                // If the other mediaplayer wasn't closed after sending its signal we parse the message
+                let other_media = parse_message(msg);
+                match other_media {
+                    Some(Contents::PlaybackStatus(status)) => {
+                        let status = status.unwrap_or_default();
+                        match status.as_str() {
+                            "Playing" => {
+                                toggle_playback(conn, &mediaplayer, "Pause");
+                            }
+                            "Paused" | "Stopped" | "" => {
+                                toggle_playback(conn, &mediaplayer, "Play");
+                            }
+                            _ => {
+                                println!("Failed to match the playbackstatus");
+                                return true;
+                            }
+                        }
                     }
-                    "Paused" | "Stopped" | "" => {
-                        toggle_playback(conn, &mediaplayer, "Play")
-                            .expect("Calling the play method failed.");
-                    }
-                    _ => {
-                        println!("Failed to match the playbackstatus");
-                        return true
-                    }
+                    // No need to handle anything else
+                    Some(Contents::Metadata { .. }) | None => return true,
                 }
             }
         }
@@ -203,22 +236,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             return true;
         }
 
-        let nameowner: NameOwnerChanged = read_nameowner(msg).expect(
-            "Read the nameowner from incoming message needs to be done to determine the change.",
-        );
-
-        // If mediaplayer has been closed, clear the output by writing an empty string (for now)
-        if nameowner
-            .name
-            .to_lowercase()
-            .contains(nameowner_opts.mediaplayer.as_str())
-            && nameowner.new_name.is_empty()
-        {
-            write_output("".to_string()).expect("Need to clear output by writing to file.");
-            send_update_signal(nameowner_opts.signal)
-                .expect("Clearing the output should also trigger an update to Waybar.");
+        if let Ok(nameowner) = read_nameowner(msg) {
+            // If mediaplayer has been closed, clear the output by writing an empty string (for now)
+            if nameowner
+                .name
+                .to_lowercase()
+                .contains(nameowner_opts.mediaplayer.as_str())
+                && nameowner.new_name.is_empty()
+            {
+                write_output("".to_string());
+                send_update_signal(nameowner_opts.signal);
+            }
         }
-
         true
     })?;
 
@@ -241,156 +270,133 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
 fn get_sender_id(msg: &Message) -> String {
     let sender_id = msg
         .sender()
-        .expect("A message should have a sender.")
+        .unwrap_or_else(|| String::new().into())
         .to_string();
     sender_id
 }
 
-/// Unpacks an incoming message when receiving a signal of PropertiesChanged from mediaplayer
-fn unpack_song(conn: &LocalConnection, msg: &Message) -> Result<Option<Song>, TypeMismatchError> {
+/// Parses a message and returns its contents
+fn parse_message(msg: &Message) -> Option<Contents> {
     // Read the two first arguments of the received message
-    let read_msg: (String, PropMap) = msg.read2()?;
+    let read_msg: Result<(String, PropMap), TypeMismatchError> = msg.read2();
 
-    let sender_id = get_sender_id(msg);
+    match read_msg {
+        Ok(read_msg) => {
+            // Get the HashMap from the second argument, which contains the relevant info
+            let map = read_msg.1;
 
-    // Get the HashMap from the second argument, which contains the relevant info
-    let map = read_msg.1;
+            // The string that tells us what kind of contents is in the message
+            if let Some(contents) = map.keys().next() {
+                match contents.as_str() {
+                    "Metadata" => {
+                        let metadata: &dyn RefArg = &map["Metadata"].0;
+                        let property_map: Option<&arg::PropMap> = arg::cast(metadata);
 
-    // Unwrap the string that tells us what kind of contents is in the message
-    let contents = map
-        .keys()
-        .next()
-        .expect("Second key in contents should contain metadata or playbackstatus.")
-        .as_str();
+                        match property_map {
+                            Some(property_map) => {
+                                let song_title: Option<&String> =
+                                    arg::prop_cast(property_map, "xesam:title");
 
-    // Match the contents to perform the correct unpacking
-    match contents {
-        // Unpack the metadata to get artist and title of the song.
-        // Since  the metadata never contains any information about playbackstatus, we explicitly ask for it
-        "Metadata" => {
-            let metadata: &dyn RefArg = &map["Metadata"].0;
-            let map: &arg::PropMap =
-                arg::cast(metadata).expect("RefArg with metadata should be cast to PropMap");
-            let song_title: Option<&String> = arg::prop_cast(map, "xesam:title");
-            let song_artist: Option<&Vec<String>> = arg::prop_cast(map, "xesam:artist");
+                                let song_artist: Option<&Vec<String>> =
+                                    arg::prop_cast(property_map, "xesam:artist");
 
-            if let (Some(song_title), Some(song_artist)) = (song_title, song_artist) {
-                Ok(Some(Song {
-                    artist: song_artist[0].to_owned(),
-                    title: song_title.to_owned(),
-                    playbackstatus: get_playbackstatus(conn, &sender_id).unwrap_or("".to_string()),
-                }))
+                                let result = Contents::Metadata {
+                                    artist: song_artist.cloned(),
+                                    title: song_title.cloned(),
+                                };
+                                Some(result)
+                            }
+                            None => None,
+                        }
+                    }
+                    "PlaybackStatus" => map["PlaybackStatus"].0.as_str().map(|playbackstatus| {
+                        Contents::PlaybackStatus(Some(playbackstatus.to_string()))
+                    }),
+                    &_ => None,
+                }
             } else {
-                Ok(None)
+                None
             }
         }
-
-        // If we receive an update on PlaybackStatus we receive no infromation about artist or title
-        // As above, no metadata is provided with the playbackstatus, so we have to get it ourselves
-        "PlaybackStatus" => {
-            let artist_title =
-                get_metadata(conn, &sender_id).unwrap_or(("".to_string(), "".to_string()));
-            Ok(Some(Song {
-                artist: artist_title.0,
-                title: artist_title.1,
-                playbackstatus: map["PlaybackStatus"]
-                    .0
-                    .as_str()
-                    .expect("Correct metadata should contain playbackstatus.")
-                    .to_owned(),
-            }))
+        Err(err) => {
+            eprintln!("Hit an error: {}", err);
+            panic!("Aborting.")
         }
-        _ => Ok(None),
     }
 }
 
 /// Calls a method on the interface to play or pause what is currently playing
-fn toggle_playback(
-    conn: &LocalConnection,
-    mediaplayer: &String,
-    cmd: &str,
-) -> Result<(), DBusError> {
-    let message = dbus::Message::new_method_call(
+fn toggle_playback(conn: &LocalConnection, mediaplayer: &String, cmd: &str) {
+    if let Ok(message) = dbus::Message::new_method_call(
         mediaplayer,
         "/org/mpris/MediaPlayer2",
         "org.mpris.MediaPlayer2.Player",
         cmd,
-    )
-    .expect("Tried to create a message with method call to toggle playback");
-
-    conn.send_with_reply_and_block(message, Duration::from_millis(5000))?;
-
-    Ok(())
-}
-
-/// Gets the playbackstatus from the mediaplayer
-fn get_playbackstatus(conn: &LocalConnection, mediaplayer: &String) -> Option<String> {
-    let message = dbus::Message::call_with_args(
-        mediaplayer,
-        "/org/mpris/MediaPlayer2",
-        "org.freedesktop.DBus.Properties",
-        "Get",
-        ("org.mpris.MediaPlayer2.Player", "PlaybackStatus"),
-    );
-
-    let reply: Result<Message, DBusError> =
-        conn.send_with_reply_and_block(message, Duration::from_millis(5000));
-
-    match reply {
-        Ok(reply) => {
-            // Unpack the playback status, or return an empty string which is rare, but happens
-            let result: Variant<String> = reply.read1().unwrap_or(Variant("".to_string()));
-
-            Some(result.0)
+    ) {
+        match conn.send_with_reply_and_block(message, Duration::from_millis(5000)) {
+            Ok(_) => (),
+            Err(err) => eprintln!("Failed to toggle playback. Error: {}", err),
         }
-        // Silently return none in case we receive an error in return.
-        // This is usually cause the mediaplayer closed after the signal was sent.
-        Err(_err) => None,
     }
 }
 
-/// Gets the currently playing artist and title from the mediaplayer in a tuple: (artist, title)
-fn get_metadata(conn: &LocalConnection, mediaplayer: &String) -> Option<(String, String)> {
-    let message = dbus::Message::call_with_args(
-        mediaplayer,
-        "/org/mpris/MediaPlayer2",
-        "org.freedesktop.DBus.Properties",
-        "Get",
-        ("org.mpris.MediaPlayer2.Player", "Metadata"),
-    );
+/// Call a
+fn get_property(
+    conn: &LocalConnection,
+    busname: Option<BusName>,
+    property: &str,
+) -> (Option<String>, Option<String>) {
+    if let Some(mediaplayer) = busname {
+        let message = dbus::Message::call_with_args(
+            mediaplayer,
+            "/org/mpris/MediaPlayer2",
+            "org.freedesktop.DBus.Properties",
+            "Get",
+            ("org.mpris.MediaPlayer2.Player", property),
+        );
 
-    let reply: Result<Message, DBusError> =
-        conn.send_with_reply_and_block(message, Duration::from_millis(5000));
+        let reply: Result<Message, DBusError> =
+            conn.send_with_reply_and_block(message, Duration::from_millis(5000));
 
-    match reply {
-        Ok(reply) => {
-            let metadata: Result<Variant<PropMap>, TypeMismatchError> = reply.read1();
+        match (reply, property) {
+            (Ok(reply), "PlaybackStatus") => {
+                // Unpack the playback status, or return an empty string which is rare, but happens
+                let result: Variant<String> = reply.read1().unwrap_or(Variant(String::new()));
 
-            match metadata {
-                Ok(metadata) => {
-                    let properties: PropMap = metadata.0;
-                    let title: &String = arg::prop_cast(&properties, "xesam:title")
-                        .expect("The song title should be present and extracted from the message.");
-                    let artist: &Vec<String> = arg::prop_cast(&properties, "xesam:artist").expect(
-                        "The song artist should be present and extracted from the message.",
-                    );
-                    let result: (String, String) = (artist[0].to_owned(), title.to_owned());
+                (Some(result.0), None)
+            }
+            (Ok(reply), "Metadata") => {
+                let metadata: Result<Variant<PropMap>, TypeMismatchError> = reply.read1();
 
-                    Some(result)
-                }
+                match metadata {
+                    Ok(metadata) => {
+                        let properties: PropMap = metadata.0;
+                        let title: Option<String> =
+                            arg::prop_cast(&properties, "xesam:title").cloned();
+                        let artist: Option<Vec<String>> =
+                            arg::prop_cast(&properties, "xesam:artist").cloned();
+                        let artist = artist.unwrap_or_default().get(0).cloned();
+                        let result: (Option<String>, Option<String>) = (artist, title);
 
-                Err(err) => {
-                    // We print an error message if there is an issue with parsing the reply.
-                    // Returning none, no need to panic. This should rarely, if ever, happen.
-                    // Error might still be useful though.
-                    eprintln!("Failed to get metadata. Error: {}", err);
-                    None
+                        result
+                    }
+
+                    Err(err) => {
+                        // We print an error message if there is an issue with parsing the reply.
+                        // Returning none, no need to panic. This should rarely, if ever, happen.
+                        // Error might still be useful though.
+                        eprintln!("Failed to get metadata. Error: {}", err);
+                        (None, None)
+                    }
                 }
             }
+            (Ok(_reply), &_) => (None, None),
+            // Return none in case we receive an error.
+            // This is usually cause the mediaplayer closed after the signal was sent.
+            (Err(_err), _) => (None, None),
         }
-        // Silently return none in case we receive an error in return.
-        // This is usually cause the mediaplayer closed after the signal was sent.
-        Err(_err) => None,
+    } else {
+        (None, None)
     }
 }
 
@@ -411,9 +417,7 @@ fn query_id(conn: &LocalConnection, mediaplayer: &String) -> Option<String> {
     match reply {
         // If we get a reply, we unpack the ID from the message and return it
         Ok(reply) => {
-            let mediaplayer_id: String = reply
-                .read1()
-                .expect("Mediaplayer ID should be a string in the first argument of the message");
+            let mediaplayer_id: String = reply.read1().unwrap_or_default();
 
             Some(mediaplayer_id)
         }
@@ -442,21 +446,30 @@ fn is_mediaplayer(conn: &LocalConnection, msg: &Message, mediaplayer: &String) -
 }
 
 /// Sends a signal to Waybar so that the output is updated
-fn send_update_signal(signal: u8) -> Result<(), Box<dyn Error>> {
+fn send_update_signal(signal: u8) {
     let signal = format!("-RTMIN+{}", signal);
 
-    Command::new("pkill")
-        .arg(signal)
-        .arg("waybar")
-        .output()
-        .expect("Failed to execute the command to update Waybar.");
-    Ok(())
+    match Command::new("pkill").arg(signal).arg("waybar").output() {
+        Ok(_) => (),
+        Err(err) => eprintln!("Failed to update Waybar. Error: {}", err),
+    }
 }
 
 /// Writes out the finished output to a file that is then parsed by Waybar
-fn write_output(text: String) -> Result<(), Box<dyn Error>> {
+fn write_output(text: String) {
     let text: &[u8] = text.as_bytes();
-    let mut file: File = File::create("/tmp/lystra-output")?;
-    file.write_all(text)?;
-    Ok(())
+
+    match File::create("/tmp/lystra-output") {
+        Ok(mut file) => match file.write_all(text) {
+            Ok(_) => (),
+            Err(err) => eprintln!(
+                "Failed to write the output to file (/tmp/lystra-output). Error: {}",
+                err
+            ),
+        },
+        Err(err) => eprintln!(
+            "Failed to create the output file (/tmp/lystra-output). Error: {}",
+            err
+        ),
+    };
 }
