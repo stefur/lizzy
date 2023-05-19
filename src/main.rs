@@ -220,8 +220,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                             }
                         }
                     }
-                    // No need to handle anything else
-                    Some(Contents::Metadata { .. }) | None => return true,
+                    // Ignore anything else
+                    _ => return true,
                 }
             }
         }
@@ -340,7 +340,7 @@ fn toggle_playback(conn: &LocalConnection, mediaplayer: &String, cmd: &str) {
     }
 }
 
-/// Call a
+/// Make a method call to get a property value from the mediaplayer
 fn get_property(
     conn: &LocalConnection,
     busname: Option<BusName>,
