@@ -2,7 +2,12 @@
 
 Lystra is a simple and small app that lets [Waybar](https://github.com/Alexays/Waybar) display what you're currently listening to by using DBus signals.
   
-Lystra supports any mediaplayer supporting [MPRIS](https://wiki.archlinux.org/title/MPRIS).
+## Features
+- Customizable output format, including colors (see Usage below)
+- Support for any [MPRIS](https://wiki.archlinux.org/title/MPRIS) mediaplayer of preference
+- Automatic pause/resume when other media content begins/stops playing (ex. YouTube videos)
+- Clearing of output when mediaplayer is closed
+- No constant polling, Lystra only updates when a signal is received
   
 Some examples of its output here:  
 <p align="center">
@@ -40,12 +45,7 @@ Currently the following options can be used to customize the output of Lystra.
 | `--playbackcolor` | None | Text color for playback status. |
 | `--textcolor` | None | Text color for artist and title. |
 | `--mediaplayer`| None | Mediaplayer interface that Lystra should listen to. Usually the name of the mediaplayer. Blank means listening to all mediaplayers. |
+| `--autotoggle` | False | Include this flag to automatically pause/resume the mediaplayer if other media content playing is detected (for example a YouTube video) |
 
 ## Example
-`lystra --playing "契 " --paused " " --playbackcolor "#9CABCA" --separator ": " --order "title,artist" --mediaplayer "spotify"`
-
-## Todo
-- ~~Better and more examples of usage~~.
-- ~~Make a release~~.
-- ~~Look into supporting more interfaces (media players)~~.
-- Feature: autopause/resume when other player begins playing.
+`lystra --playing "契 " --paused " " --playbackcolor "#9CABCA" --separator ": " --order "title,artist" --mediaplayer "spotify" --autotoggle`
