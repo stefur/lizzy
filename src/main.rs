@@ -266,14 +266,6 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
         new_name: iter.read()?,
     })
 }
-/// Unpack the sender id from a message
-fn get_sender_id(msg: &Message) -> String {
-    let sender_id = msg
-        .sender()
-        .unwrap_or_else(|| String::new().into())
-        .to_string();
-    sender_id
-}
 
 /// Parses a message and returns its contents
 fn parse_message(msg: &Message) -> Option<Contents> {
@@ -435,7 +427,10 @@ fn is_mediaplayer(conn: &LocalConnection, msg: &Message, mediaplayer: &String) -
     }
 
     // Extract the sender of our incoming message
-    let sender_id = get_sender_id(msg);
+    let sender_id = msg
+        .sender()
+        .unwrap_or_else(|| String::new().into())
+        .to_string();
 
     // Send the query and await the reply
     if let Some(mediaplayer_id) = query_id(conn, mediaplayer) {
