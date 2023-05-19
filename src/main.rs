@@ -200,8 +200,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             write_output(format!("{}{}", output.playbackstatus, output.now_playing));
             send_update_signal(properties_opts.signal);
         } else {
-            // First we check that our mediaplayer is even running
-            if let Some(mediaplayer) = query_id(conn, &properties_opts.mediaplayer) {
+            // First we check that our mediaplayer is even running and that the autotoggle flag is used
+            if let (Some(mediaplayer), true) = (
+                query_id(conn, &properties_opts.mediaplayer),
+                properties_opts.autotoggle,
+            ) {
                 // If the other mediaplayer wasn't closed after sending its signal we parse the message
                 let other_media = parse_message(msg);
                 match other_media {

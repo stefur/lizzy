@@ -14,6 +14,7 @@ OPTIONS:
   --textcolor STRING    Text color for artist and title                 <Default: None>
   --textcolor STRING    Text color for playback status                  <Default: None>
   --mediaplayer STRING  Mediaplayer interface to pick up signals from   <Default: None>
+  --autotoggle          Include this flag for automatic play/pause      <Default: False>
 ";
 
 #[derive(Clone)]
@@ -27,6 +28,7 @@ pub struct Arguments {
     pub textcolor: String,
     pub playbackcolor: String,
     pub mediaplayer: String,
+    pub autotoggle: bool,
 }
 
 pub fn parse_args() -> Result<Arguments, pico_args::Error> {
@@ -55,13 +57,14 @@ pub fn parse_args() -> Result<Arguments, pico_args::Error> {
             .unwrap_or(String::from("artist,title")),
         textcolor: pargs
             .opt_value_from_str("--textcolor")?
-            .unwrap_or(String::from("")),
+            .unwrap_or(String::new()),
         playbackcolor: pargs
             .opt_value_from_str("--playbackcolor")?
-            .unwrap_or(String::from("")),
+            .unwrap_or(String::new()),
         mediaplayer: pargs
             .opt_value_from_str("--mediaplayer")?
-            .unwrap_or(String::from("")),
+            .unwrap_or(String::new()),
+        autotoggle: pargs.contains("--autotoggle"),
     };
 
     // It's up to the caller what to do with the remaining arguments.
