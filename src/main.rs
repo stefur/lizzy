@@ -207,24 +207,30 @@ fn main() -> Result<(), Box<dyn Error>> {
             ) {
                 // If the other mediaplayer wasn't closed after sending its signal we parse the message
                 let other_media = parse_message(msg);
-                match other_media {
-                    Some(Contents::PlaybackStatus(status)) => {
-                        let status = status.unwrap_or_default();
-                        match status.as_str() {
-                            "Playing" => {
-                                toggle_playback(conn, &mediaplayer, "Pause");
-                            }
-                            "Paused" | "Stopped" | "" => {
-                                toggle_playback(conn, &mediaplayer, "Play");
-                            }
-                            _ => {
-                                println!("Failed to match the playbackstatus");
-                                return true;
-                            }
-                        }
+                let status: String = match other_media {
+                    Some(Contents::PlaybackStatus(status)) => status.unwrap_or_default(),
+                    // If we receive a message containing only metadata, we manually check the playback status
+                    // since a message with metadata also means me is playing
+                    Some(Contents::Metadata { .. }) => {
+                        get_property(conn, msg.sender(), "PlaybackStatus")
+                            .0
+                            .unwrap_or_default()
                     }
                     // Ignore anything else
                     _ => return true,
+                };
+
+                match status.as_str() {
+                    "Playing" => {
+                        toggle_playback(conn, &mediaplayer, "Pause");
+                    }
+                    "Paused" | "Stopped" | "" => {
+                        toggle_playback(conn, &mediaplayer, "Play");
+                    }
+                    _ => {
+                        println!("Failed to match the playbackstatus");
+                        return true;
+                    }
                 }
             }
         }
