@@ -1,8 +1,5 @@
 use core::panic;
 use std::error::Error;
-use std::fs::File;
-use std::io::Write;
-use std::process::Command;
 use std::time::Duration;
 
 use dbus::arg::{Iter, PropMap, RefArg, TypeMismatchError, Variant};
@@ -13,6 +10,8 @@ use dbus::Error as DBusError;
 use dbus::Message;
 use dbus::MessageType::Signal;
 use dbus::{arg, blocking::LocalConnection};
+
+use serde::Serialize;
 
 mod options;
 
@@ -27,18 +26,43 @@ struct Song {
     title: Option<String>,
     playbackstatus: String,
 }
-
-struct Output {
-    now_playing: String,
-    playbackstatus: String,
-}
-
 enum Contents {
     PlaybackStatus(Option<String>),
     Metadata {
         artist: Option<Vec<String>>,
         title: Option<String>,
     },
+}
+
+#[derive(Serialize, Debug)]
+struct JsonOutput {
+    text: String,
+}
+
+impl JsonOutput {
+    fn new(output: Output) -> JsonOutput {
+        JsonOutput {
+            text: format!("{}{}", output.playbackstatus, output.now_playing),
+        }
+    }
+    fn send(&self) {
+        println!("{}", self.to_json());
+    }
+
+    fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+
+    fn empty() -> JsonOutput {
+        JsonOutput {
+            text: String::from(""),
+        }
+    }
+}
+
+struct Output {
+    now_playing: String,
+    playbackstatus: String,
 }
 
 impl Output {
@@ -196,9 +220,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .set_status(&properties_opts.playing, &properties_opts.paused)
                 .colorize(&properties_opts.textcolor, &properties_opts.playbackcolor);
 
-            // Write out the output to file and update Waybar
-            write_output(format!("{}{}", output.playbackstatus, output.now_playing));
-            send_update_signal(properties_opts.signal);
+            // Prepare and send JSON output to Waybar
+            JsonOutput::new(output).send();
         } else {
             // First we check that our mediaplayer is even running and that the autotoggle flag is used
             if let (Some(mediaplayer), true) = (
@@ -246,15 +269,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         if let Ok(nameowner) = read_nameowner(msg) {
-            // If mediaplayer has been closed, clear the output by writing an empty string (for now)
+            // If mediaplayer has been closed, clear the output by sending an empty string
             if nameowner
                 .name
                 .to_lowercase()
                 .contains(nameowner_opts.mediaplayer.as_str())
                 && nameowner.new_name.is_empty()
             {
-                write_output("".to_string());
-                send_update_signal(nameowner_opts.signal);
+                JsonOutput::empty().send();
             }
         }
         true
@@ -447,33 +469,4 @@ fn is_mediaplayer(conn: &LocalConnection, msg: &Message, mediaplayer: &String) -
     } else {
         false
     }
-}
-
-/// Sends a signal to Waybar so that the output is updated
-fn send_update_signal(signal: u8) {
-    let signal = format!("-RTMIN+{}", signal);
-
-    match Command::new("pkill").arg(signal).arg("waybar").output() {
-        Ok(_) => (),
-        Err(err) => eprintln!("Failed to update Waybar. Error: {}", err),
-    }
-}
-
-/// Writes out the finished output to a file that is then parsed by Waybar
-fn write_output(text: String) {
-    let text: &[u8] = text.as_bytes();
-
-    match File::create("/tmp/lystra-output") {
-        Ok(mut file) => match file.write_all(text) {
-            Ok(_) => (),
-            Err(err) => eprintln!(
-                "Failed to write the output to file (/tmp/lystra-output). Error: {}",
-                err
-            ),
-        },
-        Err(err) => eprintln!(
-            "Failed to create the output file (/tmp/lystra-output). Error: {}",
-            err
-        ),
-    };
 }
