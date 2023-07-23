@@ -1,6 +1,6 @@
 # Lystra
 
-Lystra is a simple and small app that lets [Waybar](https://github.com/Alexays/Waybar) display what you're currently listening to by using DBus signals.
+Lystra is a simple and small app that lets [Waybar](https://github.com/Alexays/Waybar) display what you're currently listening to by using DBus signals instead of polling.
   
 ## Features
 - Customizable output format, including colors (see Usage below)
@@ -21,15 +21,15 @@ Some examples of its output here:
 ## Configure Waybar
 Add a custom module to your Waybar config:  
 ```
-"custom/spotify": {
-    "exec": "cat /tmp/lystra-output",
-    "interval": "once",
-    "signal": 8
+"custom/lystra": {
+    "format": "{}"
+    "exec": "lystra",
+    "response-type": "json"
 }
 ```  
-Don't forget to add the module to your bar!
+Add whatever flags you want to the command in `exec`, for example something like: `"exec": "lystra --length 65 --order title,artist --separator ": "`
 
-Then run `lystra`, and preferably add `lystra` to whatever autostart method you're using.
+Don't forget to add the module to your bar!
 
 ## Usage
 Currently the following options can be used to customize the output of Lystra.
