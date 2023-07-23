@@ -24,10 +24,10 @@ Add a custom module to your Waybar config:
 "custom/lystra": {
     "format": "{}"
     "exec": "lystra",
-    "response-type": "json"
+    "return-type": "json"
 }
 ```  
-Add whatever flags you want to the command in `exec`, for example something like: `"exec": "lystra --length 65 --order title,artist --separator ": "`
+Add whatever flags you want to the command in `exec`, for example something like: `"exec": "lystra --length 65 --order title,artist --separator ': '"`
 
 Don't forget to add the module to your bar!
 
