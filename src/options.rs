@@ -13,8 +13,7 @@ OPTIONS:
 
 #[derive(Clone)]
 pub struct Arguments {
-    pub separator: String,
-    pub order: String,
+    pub format: String,
     pub mediaplayer: String,
     pub autotoggle: bool,
 }
@@ -29,12 +28,9 @@ pub fn parse_args() -> Result<Arguments, pico_args::Error> {
     }
 
     let args = Arguments {
-        separator: pargs
-            .opt_value_from_str("--separator")?
-            .unwrap_or(String::from(" - ")),
-        order: pargs
-            .opt_value_from_str("--order")?
-            .unwrap_or(String::from("artist,title")),
+        format: pargs
+            .opt_value_from_str("--format")?
+            .unwrap_or(String::from("{{artist}} - {{title}}")),
         mediaplayer: pargs
             .opt_value_from_str("--mediaplayer")?
             .unwrap_or(String::new()),

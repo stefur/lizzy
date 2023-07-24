@@ -38,30 +38,18 @@ struct Output {
 }
 
 impl Output {
-    /// Create the output according to defined order of artist and title.
-    fn new(song: Song, order: &str, separator: &str) -> Output {
-        let order = order.split(','); // Separate the keywords for "artist" and "title"
-        let mut order_set: [Option<&str>; 2] = [None, None]; // Set up an array to store the desired order
+    /// Create the output according to defined format
+    fn new(song: Song, output_format: &str) -> Output {
+        let song_artist = song.artist.as_deref().unwrap_or_else(|| "").to_string();
+        let song_title = song.title.as_deref().unwrap_or_else(|| "").to_string();
 
-        for (i, s) in order.enumerate() {
-            match s {
-                "artist" => {
-                    order_set[i] = song.artist.as_deref();
-                }
-                "title" => {
-                    order_set[i] = song.title.as_deref();
-                }
-                _ => (),
-            }
-        }
+        let text = output_format
+            .replace("{{artist}}", &song_artist)
+            .replace("{{title}}", &song_title);
+
         Output {
             playbackstatus: song.playbackstatus,
-            now_playing: format!(
-                "{}{}{}",
-                order_set[0].expect("Make sure you entered the output order correctly. Should be 'artist,title' or 'title,artist'."),
-                separator,
-                order_set[1].expect("Make sure you entered the output order correctly. Should be 'artist,title' or 'title,artist'.")
-            ), // The complete text
+            now_playing: text, // The complete text
         }
     }
 
@@ -138,7 +126,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             };
 
             // Create an output from the song
-            let mut output = Output::new(song, &properties_opts.order, &properties_opts.separator);
+            let mut output = Output::new(song, &properties_opts.format);
 
             // Customize the output and send it
             output.escape_ampersand().send();
