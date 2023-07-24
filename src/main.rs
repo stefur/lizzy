@@ -40,8 +40,8 @@ struct Output {
 impl Output {
     /// Create the output according to defined format
     fn new(song: Song, output_format: &str) -> Output {
-        let song_artist = song.artist.as_deref().unwrap_or_else(|| "").to_string();
-        let song_title = song.title.as_deref().unwrap_or_else(|| "").to_string();
+        let song_artist = song.artist.as_deref().unwrap_or("").to_string();
+        let song_title = song.title.as_deref().unwrap_or("").to_string();
 
         let text = output_format
             .replace("{{artist}}", &song_artist)
@@ -59,6 +59,7 @@ impl Output {
         self
     }
 
+    /// Print the output to Waybar
     fn send(&self) {
         println!(
             r#"{{"text": "{}", "alt": "{}", "class": "{}"}}"#,
@@ -184,7 +185,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .contains(nameowner_opts.mediaplayer.as_str())
                 && nameowner.new_name.is_empty()
             {
-                println!("");
+                println!();
             }
         }
         true
