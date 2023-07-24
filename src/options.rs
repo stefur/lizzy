@@ -1,15 +1,14 @@
-const HELP: &str = "\
+const HELP: &str = r#"\
 Lystra
 USAGE:
   lystra --[OPTIONS] [INPUT]
 FLAGS:
   -h, --help            Prints help information
 OPTIONS:
-  --separator STRING    A separator between song artist and title       <Default: - >
-  --order STRING        The order of artist and title, comma-separated  <Default: artist,title>
+  --format STRING       The format of output using handlebar tags       <Default: "{{artist}} - {{title}}">
   --mediaplayer STRING  Mediaplayer interface to pick up signals from   <Default: None>
   --autotoggle          Include this flag for automatic play/pause      <Default: False>
-";
+"#;
 
 #[derive(Clone)]
 pub struct Arguments {
