@@ -11,8 +11,6 @@ use dbus::Message;
 use dbus::MessageType::Signal;
 use dbus::{arg, blocking::LocalConnection};
 
-use serde::Serialize;
-
 mod options;
 
 struct NameOwnerChanged {
@@ -32,32 +30,6 @@ enum Contents {
         artist: Option<Vec<String>>,
         title: Option<String>,
     },
-}
-
-#[derive(Serialize, Debug)]
-struct JsonOutput {
-    text: String,
-}
-
-impl JsonOutput {
-    fn new(output: Output) -> JsonOutput {
-        JsonOutput {
-            text: format!("{}{}", output.playbackstatus, output.now_playing),
-        }
-    }
-    fn send(&self) {
-        println!("{}", self.to_json());
-    }
-
-    fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
-    }
-
-    fn empty() -> JsonOutput {
-        JsonOutput {
-            text: String::from(""),
-        }
-    }
 }
 
 struct Output {
@@ -93,62 +65,17 @@ impl Output {
         }
     }
 
-    /// Shorten the output according to the determined max length
-    fn shorten(&mut self, length: usize) -> &mut Self {
-        if self.now_playing.chars().count() > length {
-            let upto = self
-                .now_playing
-                .char_indices()
-                .map(|(i, _)| i)
-                .nth(length)
-                .unwrap_or(self.now_playing.chars().count());
-            self.now_playing.truncate(upto);
-
-            self.now_playing = self.now_playing.trim_end().to_owned();
-
-            self.now_playing = format!("{}{}", self.now_playing, "…");
-
-            if self.now_playing.contains('(') && !self.now_playing.contains(')') {
-                self.now_playing = format!("{}{}", self.now_playing, ")")
-            }
-        }
-        self
-    }
-
-    /// Apply playback status arguments.
-    fn set_status(&mut self, playing: &str, paused: &str) -> &mut Self {
-        if self.playbackstatus == "Playing" {
-            self.playbackstatus = playing.to_owned();
-        } else if self.playbackstatus == "Paused" {
-            self.playbackstatus = paused.to_owned();
-        }
-
-        self
-    }
-
     /// Waybar doesn't like ampersand. So we replace them in the output string.
     fn escape_ampersand(&mut self) -> &mut Self {
         self.now_playing = str::replace(&self.now_playing, "&", "&amp;");
         self
     }
 
-    /// Apply color to artist/title as well as playback status.
-    fn colorize(&mut self, textcolor: &str, playbackcolor: &str) -> &mut Self {
-        if !textcolor.is_empty() {
-            self.now_playing = format!(
-                "<span foreground='{}'>{}</span>",
-                textcolor, self.now_playing
-            );
-        }
-
-        if !playbackcolor.is_empty() {
-            self.playbackstatus = format!(
-                "<span foreground='{}'>{}</span>",
-                playbackcolor, self.playbackstatus
-            );
-        }
-
-        self
+    fn send(&self) {
+        println!(
+            r#"{{"text": "{}", "alt": "{}", "class": "{}"}}"#,
+            self.now_playing, self.playbackstatus, self.playbackstatus
+        );
     }
 }
 
@@ -213,15 +140,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             // Create an output from the song
             let mut output = Output::new(song, &properties_opts.order, &properties_opts.separator);
 
-            // Customize the output
-            output
-                .shorten(properties_opts.length)
-                .escape_ampersand()
-                .set_status(&properties_opts.playing, &properties_opts.paused)
-                .colorize(&properties_opts.textcolor, &properties_opts.playbackcolor);
-
-            // Prepare and send JSON output to Waybar
-            JsonOutput::new(output).send();
+            // Customize the output and send it
+            output.escape_ampersand().send();
         } else {
             // First we check that our mediaplayer is even running and that the autotoggle flag is used
             if let (Some(mediaplayer), true) = (
@@ -276,7 +196,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .contains(nameowner_opts.mediaplayer.as_str())
                 && nameowner.new_name.is_empty()
             {
-                JsonOutput::empty().send();
+                println!("");
             }
         }
         true
