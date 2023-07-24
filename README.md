@@ -46,4 +46,4 @@ Currently the following options can be used to customize the output of Lystra.
 | `--autotoggle` | False | Include this flag to automatically pause/resume the mediaplayer if other media content playing is detected (for example a YouTube video) |
 
 ## Example
-`lystra --format '{{title}} by {{artist}}' --mediaplayer "spotify" --autotoggle`
+`lystra --format '{{title}} by {{artist}}' --mediaplayer 'spotify' --autotoggle`
