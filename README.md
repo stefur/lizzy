@@ -19,15 +19,20 @@ Some examples of its output here:
 2. `cargo install --git https://github.com/stefur/lystra lystra`
 
 ## Configure Waybar
-Add a custom module to your Waybar config:  
+Add a custom module to your Waybar config, something like:  
 ```
 "custom/lystra": {
-    "format": "{}"
+    "format": "{icon} {}"
     "exec": "lystra",
     "return-type": "json"
+    "format-icons": {
+      "Playing": "󰐊",
+      "Paused": "󰏤"
+    },
+    "max-length": 45
 }
 ```  
-Add whatever flags you want to the command in `exec`, for example something like: `"exec": "lystra --length 65 --order title,artist --separator ': '"`
+Add whatever flags you want to the command in `exec`, for example something like: `"exec": "lystra --format '{{title}}: {{artist}}' --autotoggle"`
 
 Don't forget to add the module to your bar!
 
@@ -36,16 +41,9 @@ Currently the following options can be used to customize the output of Lystra.
 
 | Flag | Default value | Description |
 | --- | --- | --- |
-| `--length` | 45 | Max length of the output before truncating (adds … to output). |
-| `--signal` | 8 | Set a custom signal number used to update Waybar. |
-| `--playing` | "Playing: " | Indicator used when a song is playing. |
-| `--paused` | "Paused: " | Indicator used when a song is paused. |
-| `--separator` | " - " | Separator between song artist and title. |
-| `--order` | "artist,title" | The order of artist and title, comma-separated. |
-| `--playbackcolor` | None | Text color for playback status. |
-| `--textcolor` | None | Text color for artist and title. |
+| `--format` | "{{artist}} - {{title}}" | Format of output, using handlebar tags. |
 | `--mediaplayer`| None | Mediaplayer interface that Lystra should listen to. Usually the name of the mediaplayer. Blank means listening to all mediaplayers. |
 | `--autotoggle` | False | Include this flag to automatically pause/resume the mediaplayer if other media content playing is detected (for example a YouTube video) |
 
 ## Example
-`lystra --playing "契 " --paused " " --playbackcolor "#9CABCA" --separator ": " --order "title,artist" --mediaplayer "spotify" --autotoggle`
+`lystra --format '{{title}} by {{artist}}' --mediaplayer "spotify" --autotoggle`
