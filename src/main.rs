@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let nameowner_opts = properties_opts.clone();
 
     let conn =
-        LocalConnection::new_session().expect("Lystra should be able to connect to session bus.");
+        LocalConnection::new_session().expect("lizzy should be able to connect to session bus.");
 
     let properties_rule = MatchRule::new()
         .with_path("/org/mpris/MediaPlayer2")
@@ -193,7 +193,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         conn.process(Duration::from_millis(1000))
-            .expect("Lystra should be able to set up a loop to listen for messages.");
+            .expect("lizzy should be able to set up a loop to listen for messages.");
     }
 }
 

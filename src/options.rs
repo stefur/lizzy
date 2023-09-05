@@ -1,7 +1,8 @@
-const HELP: &str = r#"\
-Lystra
+const HELP: &str = r#"lizzy
+=====
+
 USAGE:
-  lystra --[OPTIONS] [INPUT]
+  lizzy --[OPTIONS] [INPUT]
 FLAGS:
   -h, --help            Prints help information
 OPTIONS:
