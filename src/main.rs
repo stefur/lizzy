@@ -56,7 +56,7 @@ impl Output {
 
     /// Waybar doesn't like ampersand. So we replace them in the output string.
     fn escape_ampersand(&mut self) -> &mut Self {
-        self.now_playing = self.now_playing.replace("&", "&amp;");
+        self.now_playing = self.now_playing.replace('&', "&amp;");
         self
     }
 
