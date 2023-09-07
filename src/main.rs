@@ -1,5 +1,4 @@
 use core::time::Duration;
-use std::collections::HashMap;
 use std::error::Error;
 
 use dbus::{
@@ -150,50 +149,35 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
 /// Parses a message and returns its contents
 fn parse_message(msg: &Message) -> Option<Contents> {
     // Read the two first arguments of the received message
-    let read_msg: Result<(String, PropMap), TypeMismatchError> = msg.read2();
+    if let Ok((_, map)) = msg.read2::<String, PropMap>() {
+        if let Some(contents) = map.keys().next() {
+            match contents.as_str() {
+                "Metadata" => {
+                    let metadata = &map["Metadata"].0;
+                    let property_map: Option<&arg::PropMap> = arg::cast(metadata);
+                    let song_title =
+                        property_map.and_then(|m| arg::prop_cast::<String>(m, "xesam:title"));
+                    let song_artist =
+                        property_map.and_then(|m| arg::prop_cast::<Vec<String>>(m, "xesam:artist"));
 
-    match read_msg {
-        Ok(read_msg) => {
-            // Get the HashMap from the second argument, which contains the relevant info
-            let map: HashMap<String, Variant<Box<dyn RefArg>>> = read_msg.1;
-            // The string that tells us what kind of contents is in the message
-            if let Some(contents) = map.keys().next() {
-                match contents.as_str() {
-                    "Metadata" => {
-                        let metadata: &dyn RefArg = &map["Metadata"].0;
-                        let property_map: Option<&arg::PropMap> = arg::cast(metadata);
-
-                        match property_map {
-                            Some(property_map) => {
-                                let song_title: Option<&String> =
-                                    arg::prop_cast(property_map, "xesam:title");
-
-                                let song_artist: Option<&Vec<String>> =
-                                    arg::prop_cast(property_map, "xesam:artist");
-
-                                let result = Contents::Metadata {
-                                    artist: song_artist.cloned(),
-                                    title: song_title.cloned(),
-                                };
-                                Some(result)
-                            }
-                            None => None,
-                        }
+                    if let (Some(title), Some(artist)) = (song_title, song_artist) {
+                        return Some(Contents::Metadata {
+                            artist: Some(artist.to_owned()),
+                            title: Some(title.to_owned()),
+                        });
                     }
-                    "PlaybackStatus" => map["PlaybackStatus"].0.as_str().map(|playbackstatus| {
-                        Contents::PlaybackStatus(Some(playbackstatus.to_string()))
-                    }),
-                    &_ => None,
                 }
-            } else {
-                None
+                "PlaybackStatus" => {
+                    if let Some(playbackstatus) = map["PlaybackStatus"].0.as_str() {
+                        return Some(Contents::PlaybackStatus(Some(playbackstatus.to_string())));
+                    }
+                }
+
+                _ => (),
             }
         }
-        Err(err) => {
-            eprintln!("Hit an error: {}", err);
-            panic!("Aborting.")
-        }
     }
+    None
 }
 
 /// Calls a method on the interface to play or pause what is currently playing
