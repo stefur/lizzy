@@ -6,8 +6,9 @@ edition = "2021"
 [profile.release]
 strip = true # Automatically strip symbols from the binary.
 opt-level = "z"  # Optimize for size.
-lto = true # This can remove dead code and often times reduces binary size.
+lto = "fat" # This can remove dead code and often times reduces binary size.
 codegen-units = 1 # Allow for maximum size reduction optimizations, but longer compile time.
+panic = "abort"
 
 [dependencies]
 dbus = "0.9"
