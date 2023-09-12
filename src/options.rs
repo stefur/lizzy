@@ -11,7 +11,6 @@ OPTIONS:
   --autotoggle          Include this flag for automatic play/pause      <Default: False>
 "#;
 
-#[derive(Clone)]
 pub struct Arguments {
     pub format: String,
     pub mediaplayer: String,
