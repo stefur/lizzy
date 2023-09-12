@@ -1,5 +1,6 @@
 use core::time::Duration;
 use std::error::Error;
+use std::sync::Arc;
 
 use dbus::{
     arg,
@@ -70,19 +71,19 @@ impl Output {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse the options for use within the match rule for property changes
-    let properties_opts: options::Arguments = match options::parse_args() {
+    // Parse the options for use within the match rules
+    let options: options::Arguments = match options::parse_args() {
         Ok(value) => value,
         Err(err) => {
             eprintln!("Error: {}", err);
             std::process::exit(1);
         }
     };
-    // And a clone used for nameowner changes
-    let nameowner_opts = properties_opts.clone();
 
-    let conn =
-        LocalConnection::new_session().expect("lizzy should be able to connect to session bus.");
+    let properties_options = Arc::new(options);
+    let nameowner_options = Arc::clone(&properties_options);
+
+    let conn = LocalConnection::new_session().expect("Failed to connect to the session bus.");
 
     let properties_rule = MatchRule::new()
         .with_path("/org/mpris/MediaPlayer2")
@@ -100,10 +101,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Handles the incoming signals from  when properties change
     conn.add_match(properties_rule, move |_: (), conn, msg| {
         // Start by checking if the signal is indeed from the mediaplayer we want
-        if is_mediaplayer(conn, msg, &properties_opts.mediaplayer) {
-            handle_valid_mediaplayer_signal(conn, msg, &properties_opts);
-        } else if should_toggle_playback(conn, &properties_opts) {
-            toggle_playback_if_needed(conn, msg, &properties_opts);
+        if is_mediaplayer(conn, msg, &properties_options.mediaplayer) {
+            handle_valid_mediaplayer_signal(conn, msg, &properties_options);
+        } else if should_toggle_playback(conn, &properties_options) {
+            toggle_playback_if_needed(conn, msg, &properties_options);
         }
         true
     })?;
@@ -111,7 +112,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Handles any incoming messages when a nameowner has changed.
     conn.add_match(nameowner_rule, move |_: (), _, msg| {
         // Check if we should listen to all mediaplayers
-        if nameowner_opts.mediaplayer.is_empty() {
+        if nameowner_options.mediaplayer.is_empty() {
             return true;
         }
 
@@ -120,7 +121,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             if nameowner
                 .name
                 .to_lowercase()
-                .contains(&nameowner_opts.mediaplayer)
+                .contains(&nameowner_options.mediaplayer)
                 && nameowner.new_name.is_empty()
             {
                 println!();
