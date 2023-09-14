@@ -1,5 +1,6 @@
 use core::time::Duration;
 use std::error::Error;
+use std::fmt;
 use std::rc::Rc;
 
 use dbus::{
@@ -21,17 +22,37 @@ struct NameOwnerChanged {
     new_name: String,
 }
 
+#[derive(Debug)]
+enum MessageError {
+    ParsingFailed,
+    GetPropertyFailed,
+    MessageCreationFailed,
+}
+
+impl std::error::Error for MessageError {}
+
+impl fmt::Display for MessageError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            MessageError::ParsingFailed => write!(f, "Failed to parse message."),
+            MessageError::GetPropertyFailed => {
+                write!(f, "Failed to call method Get for property of interface.")
+            }
+            MessageError::MessageCreationFailed => {
+                write!(f, "Failed to create a message with arguments.")
+            }
+        }
+    }
+}
+
 struct Song {
-    artist: Option<String>,
-    title: Option<String>,
+    artist: String,
+    title: String,
     playbackstatus: String,
 }
 enum Contents {
-    PlaybackStatus(Option<String>),
-    Metadata {
-        artist: Option<Vec<String>>,
-        title: Option<String>,
-    },
+    PlaybackStatus(String),
+    Metadata { artist: Vec<String>, title: String },
 }
 
 struct Output {
@@ -42,12 +63,12 @@ struct Output {
 impl Output {
     /// Create the output according to defined format
     fn new(song: Song, output_format: &str) -> Output {
-        let song_artist = song.artist.as_deref().unwrap_or("");
-        let song_title = song.title.as_deref().unwrap_or("");
+        let song_artist = song.artist;
+        let song_title = song.title;
 
         let now_playing = output_format
-            .replace("{{artist}}", song_artist)
-            .replace("{{title}}", song_title);
+            .replace("{{artist}}", &song_artist)
+            .replace("{{title}}", &song_title);
 
         Output {
             playbackstatus: song.playbackstatus,
@@ -148,7 +169,7 @@ fn read_nameowner(msg: &Message) -> Result<NameOwnerChanged, TypeMismatchError> 
 }
 
 /// Parses a message and returns its contents
-fn parse_message(msg: &Message) -> Option<Contents> {
+fn parse_message(msg: &Message) -> Result<Contents, MessageError> {
     // Read the two first arguments of the received message
     if let Ok((_, map)) = msg.read2::<String, PropMap>() {
         if let Some(contents) = map.keys().next() {
@@ -162,15 +183,15 @@ fn parse_message(msg: &Message) -> Option<Contents> {
                         property_map.and_then(|m| arg::prop_cast::<Vec<String>>(m, "xesam:artist"));
 
                     if let (Some(title), Some(artist)) = (song_title, song_artist) {
-                        return Some(Contents::Metadata {
-                            artist: Some(artist.to_owned()),
-                            title: Some(title.to_owned()),
+                        return Ok(Contents::Metadata {
+                            artist: artist.to_owned(),
+                            title: title.to_owned(),
                         });
                     }
                 }
                 "PlaybackStatus" => {
                     if let Some(playbackstatus) = map["PlaybackStatus"].0.as_str() {
-                        return Some(Contents::PlaybackStatus(Some(playbackstatus.to_string())));
+                        return Ok(Contents::PlaybackStatus(playbackstatus.to_string()));
                     }
                 }
 
@@ -178,7 +199,7 @@ fn parse_message(msg: &Message) -> Option<Contents> {
             }
         }
     }
-    None
+    Err(MessageError::ParsingFailed)
 }
 
 /// Calls a method on the interface to play or pause what is currently playing
@@ -207,22 +228,31 @@ fn handle_valid_mediaplayer_signal(
     let contents = parse_message(msg);
 
     let song = match contents {
-        Some(Contents::Metadata { artist, title }) => Song {
-            artist: artist.unwrap_or_default().get(0).cloned(),
-            title,
-            playbackstatus: get_property(conn, msg.sender(), "PlaybackStatus")
-                .0
-                .unwrap_or_default(),
-        },
-        Some(Contents::PlaybackStatus(status)) => {
-            let metadata = get_property(conn, msg.sender(), "Metadata");
-            Song {
-                artist: metadata.0,
-                title: metadata.1,
-                playbackstatus: status.unwrap_or_default(),
+        Ok(Contents::Metadata { artist, title }) => {
+            let playbackstatus = get_property(conn, msg.sender(), "PlaybackStatus");
+            if let Ok(Contents::PlaybackStatus(status)) = playbackstatus {
+                Song {
+                    artist: artist.first().cloned().unwrap_or_default(),
+                    title: title,
+                    playbackstatus: status,
+                }
+            } else {
+                return;
             }
         }
-        None => return, // Ignore messages with no valid content
+        Ok(Contents::PlaybackStatus(status)) => {
+            let metadata = get_property(conn, msg.sender(), "Metadata");
+            if let Ok(Contents::Metadata { artist, title }) = metadata {
+                Song {
+                    artist: artist.first().cloned().unwrap_or_default(),
+                    title: title,
+                    playbackstatus: status,
+                }
+            } else {
+                return;
+            }
+        }
+        Err(_) => return, // Ignore messages with no valid content
     };
 
     let mut output = Output::new(song, &properties_opts.format);
@@ -236,10 +266,15 @@ fn should_toggle_playback(conn: &LocalConnection, properties_opts: &Arguments) -
 fn toggle_playback_if_needed(conn: &LocalConnection, msg: &Message, properties_opts: &Arguments) {
     let other_media = parse_message(msg);
     let status = match other_media {
-        Some(Contents::PlaybackStatus(status)) => status.unwrap_or_default(),
-        Some(Contents::Metadata { .. }) => get_property(conn, msg.sender(), "PlaybackStatus")
-            .0
-            .unwrap_or_default(),
+        Ok(Contents::PlaybackStatus(status)) => status,
+        Ok(Contents::Metadata { .. }) => {
+            let playbackstatus = get_property(conn, msg.sender(), "PlaybackStatus");
+            if let Ok(Contents::PlaybackStatus(status)) = playbackstatus {
+                status
+            } else {
+                return;
+            }
+        }
         _ => return, // Ignore messages with no valid content
     };
 
@@ -262,7 +297,7 @@ fn get_property(
     conn: &LocalConnection,
     busname: Option<BusName>,
     property: &str,
-) -> (Option<String>, Option<String>) {
+) -> Result<Contents, MessageError> {
     if let Some(mediaplayer) = busname {
         let interface = "org.mpris.MediaPlayer2.Player";
         let path = "/org/mpris/MediaPlayer2";
@@ -273,40 +308,38 @@ fn get_property(
             "Get",
             (interface, property),
         );
-
-        let (artist, title) =
-            match conn.send_with_reply_and_block(message, Duration::from_millis(5000)) {
-                Ok(reply) => match property {
-                    "PlaybackStatus" => {
-                        let result: Variant<String> =
-                            reply.read1().unwrap_or_else(|_| Variant(String::new()));
-                        (Some(result.0), None)
+        match conn.send_with_reply_and_block(message, Duration::from_millis(5000)) {
+            Ok(reply) => match property {
+                "PlaybackStatus" => {
+                    let result: Variant<String> =
+                        reply.read1().unwrap_or_else(|_| Variant(String::new()));
+                    Ok(Contents::PlaybackStatus(result.0))
+                }
+                "Metadata" => {
+                    let metadata: Result<Variant<PropMap>, TypeMismatchError> = reply.read1();
+                    if let Ok(metadata) = metadata {
+                        let properties: PropMap = metadata.0;
+                        let title: Option<String> =
+                            arg::prop_cast(&properties, "xesam:title").cloned();
+                        let artist: Option<Vec<String>> =
+                            arg::prop_cast(&properties, "xesam:artist").cloned();
+                        Ok(Contents::Metadata {
+                            artist: artist.unwrap_or_default(),
+                            title: title.unwrap_or_default(),
+                        })
+                    } else {
+                        return Err(MessageError::GetPropertyFailed);
                     }
-                    "Metadata" => {
-                        let metadata: Result<Variant<PropMap>, TypeMismatchError> = reply.read1();
-                        match metadata {
-                            Ok(metadata) => {
-                                let properties: PropMap = metadata.0;
-                                let title: Option<String> =
-                                    arg::prop_cast(&properties, "xesam:title").cloned();
-                                let artist: Option<Vec<String>> =
-                                    arg::prop_cast(&properties, "xesam:artist").cloned();
-                                (artist.unwrap_or_default().get(0).cloned(), title)
-                            }
-                            Err(err) => {
-                                eprintln!("Failed to get metadata. Error: {}", err);
-                                (None, None)
-                            }
-                        }
-                    }
-                    _ => (None, None),
-                },
-                Err(_) => (None, None),
-            };
-
-        (artist, title)
+                }
+                &_ => return Err(MessageError::GetPropertyFailed),
+            },
+            Err(err) => {
+                eprintln!("Failed to create method call. DBus Error: {}", err);
+                return Err(MessageError::GetPropertyFailed);
+            }
+        }
     } else {
-        (None, None)
+        return Err(MessageError::MessageCreationFailed);
     }
 }
 
