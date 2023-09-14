@@ -1,6 +1,6 @@
 use core::time::Duration;
 use std::error::Error;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use dbus::{
     arg,
@@ -80,8 +80,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let properties_options = Arc::new(options);
-    let nameowner_options = Arc::clone(&properties_options);
+    let properties_options = Rc::new(options);
+    let nameowner_options = Rc::clone(&properties_options);
 
     let conn = LocalConnection::new_session().expect("Failed to connect to the session bus.");
 
