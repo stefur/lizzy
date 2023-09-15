@@ -24,9 +24,9 @@ struct NameOwnerChanged {
 
 #[derive(Debug)]
 enum MessageError {
-    ParsingFailed,
-    GetPropertyFailed,
-    MessageCreationFailed,
+    Parsing,
+    GetProperty,
+    MessageCreation,
 }
 
 impl std::error::Error for MessageError {}
@@ -34,11 +34,11 @@ impl std::error::Error for MessageError {}
 impl fmt::Display for MessageError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            MessageError::ParsingFailed => write!(f, "Failed to parse message."),
-            MessageError::GetPropertyFailed => {
+            MessageError::Parsing => write!(f, "Failed to parse message."),
+            MessageError::GetProperty => {
                 write!(f, "Failed to call method Get for property of interface.")
             }
-            MessageError::MessageCreationFailed => {
+            MessageError::MessageCreation => {
                 write!(f, "Failed to create a message with arguments.")
             }
         }
@@ -199,7 +199,7 @@ fn parse_message(msg: &Message) -> Result<Contents, MessageError> {
             }
         }
     }
-    Err(MessageError::ParsingFailed)
+    Err(MessageError::Parsing)
 }
 
 /// Calls a method on the interface to play or pause what is currently playing
@@ -230,23 +230,23 @@ fn handle_valid_mediaplayer_signal(
     let song = match contents {
         Ok(Contents::Metadata { artist, title }) => {
             let playbackstatus = get_property(conn, msg.sender(), "PlaybackStatus");
-            if let Ok(Contents::PlaybackStatus(status)) = playbackstatus {
+            if let Ok(Contents::PlaybackStatus(playbackstatus)) = playbackstatus {
                 Song {
                     artist: artist.first().cloned().unwrap_or_default(),
-                    title: title,
-                    playbackstatus: status,
+                    title,
+                    playbackstatus,
                 }
             } else {
                 return;
             }
         }
-        Ok(Contents::PlaybackStatus(status)) => {
+        Ok(Contents::PlaybackStatus(playbackstatus)) => {
             let metadata = get_property(conn, msg.sender(), "Metadata");
             if let Ok(Contents::Metadata { artist, title }) = metadata {
                 Song {
                     artist: artist.first().cloned().unwrap_or_default(),
-                    title: title,
-                    playbackstatus: status,
+                    title,
+                    playbackstatus,
                 }
             } else {
                 return;
@@ -328,18 +328,18 @@ fn get_property(
                             title: title.unwrap_or_default(),
                         })
                     } else {
-                        return Err(MessageError::GetPropertyFailed);
+                        Err(MessageError::GetProperty)
                     }
                 }
-                &_ => return Err(MessageError::GetPropertyFailed),
+                &_ => Err(MessageError::GetProperty),
             },
             Err(err) => {
                 eprintln!("Failed to create method call. DBus Error: {}", err);
-                return Err(MessageError::GetPropertyFailed);
+                Err(MessageError::GetProperty)
             }
         }
     } else {
-        return Err(MessageError::MessageCreationFailed);
+        Err(MessageError::MessageCreation)
     }
 }
 
