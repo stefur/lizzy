@@ -10,7 +10,7 @@ use dbus::{
 use std::fmt;
 use std::time::Duration;
 
-pub struct Song {
+pub struct Media {
     pub artist: String,
     pub title: String,
     pub playbackstatus: String,
@@ -69,12 +69,12 @@ fn parse_message(msg: &Message) -> Result<Contents, MessageError> {
                 "Metadata" => {
                     let metadata = &map["Metadata"].0;
                     let property_map: Option<&arg::PropMap> = arg::cast(metadata);
-                    let song_title =
+                    let media_title =
                         property_map.and_then(|m| arg::prop_cast::<String>(m, "xesam:title"));
-                    let song_artist =
+                    let media_artist =
                         property_map.and_then(|m| arg::prop_cast::<Vec<String>>(m, "xesam:artist"));
 
-                    if let (Some(title), Some(artist)) = (song_title, song_artist) {
+                    if let (Some(title), Some(artist)) = (media_title, media_artist) {
                         return Ok(Contents::Metadata {
                             artist: artist.to_owned(),
                             title: title.to_owned(),
@@ -203,6 +203,7 @@ pub fn toggle_playback(conn: &LocalConnection, mediaplayer: &str, cmd: &str) {
     }
 }
 
+/// Unpack the message and return media metadata contents to use as output in Waybar
 pub fn handle_valid_mediaplayer_signal(
     conn: &LocalConnection,
     msg: &Message,
@@ -210,11 +211,11 @@ pub fn handle_valid_mediaplayer_signal(
 ) {
     let contents = parse_message(msg);
 
-    let song = match contents {
+    let media = match contents {
         Ok(Contents::Metadata { artist, title }) => {
             let playbackstatus = get_property(conn, msg.sender(), "PlaybackStatus");
             if let Ok(Contents::PlaybackStatus(playbackstatus)) = playbackstatus {
-                Song {
+                Media {
                     artist: artist.first().cloned().unwrap_or_default(),
                     title,
                     playbackstatus,
@@ -226,7 +227,7 @@ pub fn handle_valid_mediaplayer_signal(
         Ok(Contents::PlaybackStatus(playbackstatus)) => {
             let metadata = get_property(conn, msg.sender(), "Metadata");
             if let Ok(Contents::Metadata { artist, title }) = metadata {
-                Song {
+                Media {
                     artist: artist.first().cloned().unwrap_or_default(),
                     title,
                     playbackstatus,
@@ -238,14 +239,16 @@ pub fn handle_valid_mediaplayer_signal(
         Err(_) => return, // Ignore messages with no valid content
     };
 
-    let mut output = BarOutput::new(song, &properties_opts.format);
+    let mut output = BarOutput::new(media, &properties_opts.format);
     output.escape_ampersand().send();
 }
 
+/// Check if we should toggle the playback
 pub fn should_toggle_playback(conn: &LocalConnection, properties_opts: &Arguments) -> bool {
     properties_opts.autotoggle && query_id(conn, &properties_opts.mediaplayer).is_some()
 }
 
+/// Toggle playback of the mediaplayer when another player sends a play/pause message
 pub fn toggle_playback_if_needed(
     conn: &LocalConnection,
     msg: &Message,
@@ -272,9 +275,6 @@ pub fn toggle_playback_if_needed(
 
     match status.as_str() {
         "Playing" => toggle_playback(conn, &mediaplayer, "Pause"),
-        "Paused" | "Stopped" | "" => toggle_playback(conn, &mediaplayer, "Play"),
-        _ => {
-            println!("Failed to match the playbackstatus");
-        }
+        _ => toggle_playback(conn, &mediaplayer, "Play"),
     }
 }

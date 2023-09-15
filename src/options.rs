@@ -17,6 +17,7 @@ pub struct Arguments {
     pub autotoggle: bool,
 }
 
+/// Get the user arguments
 pub fn parse_args() -> Result<Arguments, pico_args::Error> {
     let mut pargs = pico_args::Arguments::from_env();
 

@@ -1,4 +1,4 @@
-use crate::message::Song;
+use crate::message::Media;
 
 pub struct BarOutput {
     pub now_playing: String,
@@ -7,16 +7,16 @@ pub struct BarOutput {
 
 impl BarOutput {
     /// Create the output according to defined format
-    pub fn new(song: Song, output_format: &str) -> BarOutput {
-        let song_artist = song.artist;
-        let song_title = song.title;
+    pub fn new(media: Media, output_format: &str) -> BarOutput {
+        let media_artist = media.artist;
+        let media_title = media.title;
 
         let now_playing = output_format
-            .replace("{{artist}}", &song_artist)
-            .replace("{{title}}", &song_title);
+            .replace("{{artist}}", &media_artist)
+            .replace("{{title}}", &media_title);
 
         BarOutput {
-            playbackstatus: song.playbackstatus,
+            playbackstatus: media.playbackstatus,
             now_playing,
         }
     }
