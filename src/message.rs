@@ -32,6 +32,7 @@ pub enum MessageError {
     Parsing,
     GetProperty,
     MessageCreation,
+    MethodCall,
 }
 
 impl std::error::Error for MessageError {}
@@ -41,10 +42,13 @@ impl fmt::Display for MessageError {
         match self {
             MessageError::Parsing => write!(f, "Failed to parse message."),
             MessageError::GetProperty => {
-                write!(f, "Failed to call method Get for property of interface.")
+                write!(f, "Failed to get property.")
             }
             MessageError::MessageCreation => {
                 write!(f, "Failed to create a message with arguments.")
+            }
+            MessageError::MethodCall => {
+                write!(f, "Failed to make a method call.")
             }
         }
     }
@@ -110,12 +114,13 @@ pub fn get_property(
             "Get",
             (interface, property),
         );
-        match conn.send_with_reply_and_block(message, Duration::from_millis(5000)) {
-            Ok(reply) => match property {
+
+        if let Ok(reply) = conn.send_with_reply_and_block(message, Duration::from_millis(5000)) {
+            match property {
                 "PlaybackStatus" => {
                     let result: Variant<String> =
                         reply.read1().unwrap_or_else(|_| Variant(String::new()));
-                    Ok(Contents::PlaybackStatus(result.0))
+                    return Ok(Contents::PlaybackStatus(result.0));
                 }
                 "Metadata" => {
                     let metadata: Result<Variant<PropMap>, TypeMismatchError> = reply.read1();
@@ -125,28 +130,26 @@ pub fn get_property(
                             arg::prop_cast(&properties, "xesam:title").cloned();
                         let artist: Option<Vec<String>> =
                             arg::prop_cast(&properties, "xesam:artist").cloned();
-                        Ok(Contents::Metadata {
+                        return Ok(Contents::Metadata {
                             artist: artist.unwrap_or_default(),
                             title: title.unwrap_or_default(),
-                        })
-                    } else {
-                        Err(MessageError::GetProperty)
+                        });
                     }
                 }
-                &_ => Err(MessageError::GetProperty),
-            },
-            Err(err) => {
-                eprintln!("Failed to create method call. DBus Error: {}", err);
-                Err(MessageError::GetProperty)
+                &_ => {}
             }
+        } else {
+            return Err(MessageError::MethodCall);
         }
     } else {
-        Err(MessageError::MessageCreation)
+        return Err(MessageError::MessageCreation);
     }
+
+    Err(MessageError::GetProperty)
 }
 
 /// Create a query with a method call to ask for the ID of the mediaplayer
-pub fn query_id(conn: &LocalConnection, mediaplayer: &str) -> Option<String> {
+pub fn query_id(conn: &LocalConnection, mediaplayer: &str) -> Result<String, MessageError> {
     let query = dbus::Message::call_with_args(
         "org.freedesktop.DBus",
         "/",
@@ -161,10 +164,10 @@ pub fn query_id(conn: &LocalConnection, mediaplayer: &str) -> Option<String> {
 
     match reply {
         // If we get a reply, we unpack the ID from the message and return it
-        Ok(reply) => Some(reply.read1().unwrap_or_default()),
+        Ok(reply) => Ok(reply.read1::<String>().unwrap_or_default()),
 
         // If the message is not from the mediaplayer we're listening to, we'll receive an error in return, which is fine, so return None
-        Err(_) => None,
+        Err(_) => Err(MessageError::MethodCall),
     }
 }
 
@@ -179,9 +182,10 @@ pub fn is_mediaplayer(conn: &LocalConnection, msg: &Message, mediaplayer: &str) 
     let sender_id = msg.sender().map_or(String::new(), |s| s.to_string());
 
     // Check if the sender matches the specified mediaplayer
-    match query_id(conn, mediaplayer) {
-        Some(mediaplayer_id) => sender_id == mediaplayer_id,
-        None => false,
+    if let Ok(mediaplayer_id) = query_id(conn, mediaplayer) {
+        sender_id == mediaplayer_id
+    } else {
+        false
     }
 }
 
@@ -245,7 +249,7 @@ pub fn handle_valid_mediaplayer_signal(
 
 /// Check if we should toggle the playback
 pub fn should_toggle_playback(conn: &LocalConnection, properties_opts: &Arguments) -> bool {
-    properties_opts.autotoggle && query_id(conn, &properties_opts.mediaplayer).is_some()
+    properties_opts.autotoggle && query_id(conn, &properties_opts.mediaplayer).is_ok()
 }
 
 /// Toggle playback of the mediaplayer when another player sends a play/pause message
@@ -269,8 +273,8 @@ pub fn toggle_playback_if_needed(
     };
 
     let mediaplayer = match query_id(conn, &properties_opts.mediaplayer) {
-        Some(mediaplayer) => mediaplayer,
-        None => return, // No valid mediaplayer found
+        Ok(mediaplayer) => mediaplayer,
+        Err(_) => return, // No valid mediaplayer found
     };
 
     match status.as_str() {
