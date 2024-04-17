@@ -2,6 +2,7 @@
 name = "lizzy"
 version = "0.1.4"
 edition = "2021"
+license = "MIT"
 
 [profile.release]
 strip = true # Automatically strip symbols from the binary.
