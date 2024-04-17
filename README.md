@@ -20,18 +20,20 @@ Some examples of its output here:
 
 ## Configure Waybar
 Add a custom module to your Waybar config, something like:  
-```
+
+```json
 "custom/lizzy": {
-    "format": "{icon} {}"
+    "format": "{icon} {}",
     "exec": "lizzy",
-    "return-type": "json"
+    "return-type": "json",
     "format-icons": {
       "Playing": "󰐊",
       "Paused": "󰏤"
     },
     "max-length": 45
 }
-```  
+```
+
 Add whatever flags you want to the command in `exec`, for example something like: `"exec": "lizzy --format '{{title}}: {{artist}}' --autotoggle"`
 
 Don't forget to add the module to your bar!
