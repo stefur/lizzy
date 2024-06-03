@@ -150,24 +150,83 @@ pub fn get_property(
 
 /// Create a query with a method call to ask for the ID of the mediaplayer
 pub fn query_id(conn: &LocalConnection, mediaplayer: &str) -> Result<String, MessageError> {
-    let query = dbus::Message::call_with_args(
+    // Create a query to get all names available
+    let query = Message::call_with_args(
         "org.freedesktop.DBus",
         "/",
         "org.freedesktop.DBus",
-        "GetNameOwner",
-        (format!("org.mpris.MediaPlayer2.{}", mediaplayer),),
+        "ListNames",
+        (),
     );
 
     // Send the query and await the reply
     let reply: Result<Message, DBusError> =
         conn.send_with_reply_and_block(query, Duration::from_millis(5000));
 
-    match reply {
-        // If we get a reply, we unpack the ID from the message and return it
-        Ok(reply) => Ok(reply.read1::<String>().unwrap_or_default()),
+    // Go over the names in the message
+    if let Ok(message) = reply {
+        // Unpack the vector of names
+        let names = message.read1::<Vec<String>>().unwrap_or_default();
 
-        // If the message is not from the mediaplayer we're listening to, we'll receive an error in return, which is fine, so return None
-        Err(_) => Err(MessageError::MethodCall),
+        // Get the name owners on org.mpris.MediaPlayer2, e.g. MPRIS players and keep only the identifier
+        let mpris_names: Vec<String> = names
+            .into_iter()
+            .filter(|name| name.starts_with("org.mpris.MediaPlayer2."))
+            .map(|name| {
+                name.trim_start_matches("org.mpris.MediaPlayer2.")
+                    .to_string()
+            })
+            .collect();
+
+        // Now iterate over the names that is an MPRIS player
+        for name in mpris_names {
+            if matches_pattern(mediaplayer, &name) {
+                // If a match is found, get the owner ID of the player
+                let query = Message::call_with_args(
+                    "org.freedesktop.DBus",
+                    "/",
+                    "org.freedesktop.DBus",
+                    "GetNameOwner",
+                    (format!("org.mpris.MediaPlayer2.{}", &name),),
+                );
+
+                // Send the query and get the response
+                let reply = conn.send_with_reply_and_block(query, Duration::from_millis(2000));
+
+                // And get the ID
+                if let Ok(message) = reply {
+                    let id = message.read1::<String>().unwrap_or_default();
+                    return Ok(id);
+                }
+            }
+        }
+    }
+    // Should probably handle this some other way, but we basically ignore errors
+    Err(MessageError::MethodCall)
+}
+
+/// Simple glob pattern check for when mediaplayer names vary, like Firefox does for each instance
+fn matches_pattern(mediaplayer: &str, sender: &str) -> bool {
+    // Check if mediaplayer option contains any glob pattern characters
+    if mediaplayer.contains('*') {
+        match mediaplayer {
+            mp if mp.starts_with('*') && mp.ends_with('*') && mp.len() > 2 => {
+                let infix = &mp[1..mp.len() - 1];
+                sender.contains(infix)
+            }
+            mp if mp.ends_with('*') => {
+                let prefix = &mp[..mp.len() - 1];
+                sender.starts_with(prefix)
+            }
+            mp if mp.starts_with('*') => {
+                let suffix = &mp[1..];
+                sender.ends_with(suffix)
+            }
+            _ => false, // This case should not occur really, but got to handle it
+        }
+    } else {
+        // If no glob wildcard, directly compare with sender instead
+        mediaplayer == sender
     }
 }
 
