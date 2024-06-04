@@ -54,12 +54,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         if let Ok(nameowner) = message::read_nameowner(msg) {
-            // If the mediaplayer has been closed, clear the output
-            if nameowner
-                .name
-                .to_lowercase()
-                .contains(&nameowner_options.mediaplayer)
-                && nameowner.new_name.is_empty()
+            if nameowner.new_name.is_empty()
+                && nameowner.name.starts_with("org.mpris.MediaPlayer2.")
+                && message::matches_pattern(
+                    &nameowner_options.mediaplayer,
+                    &nameowner.name.trim_start_matches("org.mpris.MediaPlayer2."),
+                )
             {
                 println!();
             }

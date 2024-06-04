@@ -206,7 +206,7 @@ pub fn query_id(conn: &LocalConnection, mediaplayer: &str) -> Result<String, Mes
 }
 
 /// Simple glob pattern check for when mediaplayer names vary, like Firefox does for each instance
-fn matches_pattern(mediaplayer: &str, sender: &str) -> bool {
+pub fn matches_pattern(mediaplayer: &str, sender: &str) -> bool {
     // Check if mediaplayer option contains any glob pattern characters
     if mediaplayer.contains('*') {
         match mediaplayer {
