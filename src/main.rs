@@ -1,7 +1,8 @@
 use core::time::Duration;
 use dbus::{blocking::LocalConnection, message::MatchRule, MessageType::Signal};
+use once_cell::sync::Lazy;
+use options::Arguments;
 use std::error::Error;
-use std::rc::Rc;
 
 mod message;
 mod options;
@@ -9,16 +10,13 @@ mod output;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse the options for use within the match rules
-    let options: options::Arguments = match options::parse_args() {
+    static OPTIONS: Lazy<Arguments> = Lazy::new(|| match options::parse_args() {
         Ok(value) => value,
         Err(err) => {
             eprintln!("Error: {}", err);
             std::process::exit(1);
         }
-    };
-
-    let properties_options = Rc::new(options);
-    let nameowner_options = Rc::clone(&properties_options);
+    });
 
     let conn = LocalConnection::new_session().expect("Failed to connect to the session bus.");
 
@@ -38,10 +36,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Handles the incoming signals from  when properties change
     conn.add_match(properties_rule, move |_: (), conn, msg| {
         // Start by checking if the signal is indeed from the mediaplayer we want
-        if message::is_mediaplayer(conn, msg, &properties_options.mediaplayer) {
-            message::handle_valid_mediaplayer_signal(conn, msg, &properties_options);
-        } else if message::should_toggle_playback(conn, &properties_options) {
-            message::toggle_playback_if_needed(conn, msg, &properties_options);
+        if message::is_mediaplayer(conn, msg, &OPTIONS.mediaplayer) {
+            message::handle_valid_mediaplayer_signal(conn, msg, &OPTIONS);
+        } else if message::should_toggle_playback(&conn, &OPTIONS) {
+            message::toggle_playback_if_needed(&conn, msg, &OPTIONS);
         }
         true
     })?;
@@ -49,7 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Handles any incoming messages when a nameowner has changed.
     conn.add_match(nameowner_rule, move |_: (), _, msg| {
         // Check if we should listen to all mediaplayers
-        if nameowner_options.mediaplayer.is_empty() {
+        if OPTIONS.mediaplayer.is_empty() {
             return true;
         }
 
@@ -57,7 +55,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             if nameowner.new_name.is_empty()
                 && nameowner.name.starts_with("org.mpris.MediaPlayer2.")
                 && message::matches_pattern(
-                    &nameowner_options.mediaplayer,
+                    &OPTIONS.mediaplayer,
                     &nameowner.name.trim_start_matches("org.mpris.MediaPlayer2."),
                 )
             {
