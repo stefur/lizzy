@@ -38,8 +38,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Start by checking if the signal is indeed from the mediaplayer we want
         if message::is_mediaplayer(conn, msg, &OPTIONS.mediaplayer) {
             message::handle_valid_mediaplayer_signal(conn, msg, &OPTIONS);
-        } else if message::should_toggle_playback(&conn, &OPTIONS) {
-            message::toggle_playback_if_needed(&conn, msg, &OPTIONS);
+        } else if message::should_toggle_playback(conn, &OPTIONS) {
+            message::toggle_playback_if_needed(conn, msg, &OPTIONS);
         }
         true
     })?;
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 && nameowner.name.starts_with("org.mpris.MediaPlayer2.")
                 && message::matches_pattern(
                     &OPTIONS.mediaplayer,
-                    &nameowner.name.trim_start_matches("org.mpris.MediaPlayer2."),
+                    nameowner.name.trim_start_matches("org.mpris.MediaPlayer2."),
                 )
             {
                 println!();
