@@ -20,7 +20,7 @@ mod media;
 mod options;
 
 /// Simple glob pattern match
-fn matches_pattern(mediaplayer: &str, other: &str) -> bool {
+fn matches_glob_pattern(mediaplayer: &str, other: &str) -> bool {
     // Check if mediaplayer option contains any glob pattern characters
     match mediaplayer {
         mp if mp.starts_with('*') && mp.ends_with('*') && mp.len() > 2 => {
@@ -55,17 +55,6 @@ async fn unpack_metadata(
     Ok((artist, title))
 }
 
-async fn unpack_playbackstatus(
-    changed: &PropertiesChangedArgs<'_>,
-) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
-    if let Some(playbackstatus) = changed.changed_properties().get("PlaybackStatus") {
-        let playbackstatus: String = playbackstatus.downcast_ref()?;
-        Ok(Some(playbackstatus))
-    } else {
-        Ok(None)
-    }
-}
-
 /// Get the first name owner that matches the glob pattern
 async fn get_first_match(
     proxy: &DBusProxy<'_>,
@@ -75,7 +64,7 @@ async fn get_first_match(
 
     let first_matching_name = all_names.iter().find(|name| {
         if let BusName::WellKnown(bus_name) = name.inner() {
-            matches_pattern(
+            matches_glob_pattern(
                 glob_pattern,
                 bus_name
                     .as_str()
@@ -105,6 +94,54 @@ async fn get_property(
     .await?;
 
     Ok(proxy.get_property(property).await?)
+}
+
+/// Parses arguments and unpacks metadata and playbackstatus as well as completes missing data
+async fn parse_msg_args(
+    connection: &Connection,
+    args: PropertiesChangedArgs<'_>,
+    mediaplayer_bus: &str,
+) -> Result<Option<Media>, Box<dyn Error + Send + Sync>> {
+    // While we can receive metadata or playbackstatus, we never get them both.
+    // This is why we for each instance get the missing information to make sure
+    // we produce correct output.
+
+    // Handle metadata
+    let (metadata, playbackstatus) = match (
+        args.changed_properties().get("Metadata"),
+        args.changed_properties().get("PlaybackStatus"),
+    ) {
+        (Some(metadata_value), _) => {
+            // Unpack metadata
+            let metadata = unpack_metadata(metadata_value).await?;
+            // Get the playbackstatus as well
+            let playbackstatus: String =
+                get_property(connection, mediaplayer_bus, "PlaybackStatus")
+                    .await?
+                    .downcast_ref()?;
+
+            (metadata, playbackstatus)
+        }
+        (_, Some(playbackstatus_value)) => {
+            // Get playback status
+            let playbackstatus: String = playbackstatus_value.downcast_ref()?;
+            // And then fetch the metadata
+            let metadata: Value = get_property(connection, mediaplayer_bus, "Metadata").await?;
+            let metadata = unpack_metadata(&metadata).await?;
+
+            (metadata, playbackstatus)
+        }
+        // If for whatever reason no key matches, we just return None, that's fine
+        _ => return Ok(None),
+    };
+
+    // Assuming we got what we needed we create an instance of media and return it
+    let media = Media::new(
+        metadata.0.unwrap_or_else(String::default),
+        metadata.1.unwrap_or_else(String::default),
+        playbackstatus,
+    );
+    Ok(Some(media))
 }
 
 /// Calls a method on the interface to play or pause what is currently playing
@@ -180,21 +217,23 @@ async fn property_changes_stream(
         let header = properties.message().header();
         let sender = header.sender().unwrap().as_str();
 
-        // Check if we should listen to all mediaplayers
-        if !options.mediaplayer.is_empty() {
-            // Create a BusName to get the ID from
-            let bus_name = BusName::try_from(mediaplayer_bus.to_owned())?;
-            let mediaplayer_id = dbus_proxy.get_name_owner(bus_name).await?;
+        // Check if we should listen to all mediaplayers, then we modify the mediaplayer_bus to whatever is incoming
+        if options.mediaplayer.is_empty() {
+            sender.clone_into(&mut mediaplayer_bus);
+        }
 
-            // If the sender is not a mediaplayer we're after, skip it
-            if sender != mediaplayer_id.as_str() {
-                // But first check if we should toggle the playback status
-                if options.autotoggle {
-                    // If we should toggle the playback, we get the playbackstatus reported from the other mediaplayer
-                    let playbackstatus: Option<String> = unpack_playbackstatus(&changed).await?;
+        // Create a BusName to get the ID from
+        let bus_name = BusName::try_from(mediaplayer_bus.to_owned())?;
+        let mediaplayer_id = dbus_proxy.get_name_owner(bus_name).await?;
 
+        // If the sender is not a mediaplayer we're after, skip it
+        if sender != mediaplayer_id.as_str() {
+            // But first check if we should toggle the playback status
+            if options.autotoggle {
+                // If we should toggle the playback, we get the playbackstatus reported from the other mediaplayer
+                if let Some(media) = parse_msg_args(&connection, changed, &mediaplayer_bus).await? {
                     // And we send the reverse method call to our mediaplayer
-                    match playbackstatus.unwrap_or_default().as_str() {
+                    match media.playbackstatus.as_str() {
                         "Playing" => {
                             toggle_playback(&connection, &mediaplayer_bus, "Pause").await?
                         }
@@ -202,56 +241,16 @@ async fn property_changes_stream(
                         _ => (),
                     }
                 }
-                // Since this is not a mediaplayer we care about, just go next
-                continue;
             }
-        } else {
-            // If there is no mediaplayer defined, we just use the busname from whatever sender comes through
-            mediaplayer_bus = sender.to_owned();
+            // Since this is not a mediaplayer we care about, just go next
+            continue;
         }
 
-        // Handle metadata
-        if let Some(metadata) = changed.changed_properties().get("Metadata") {
-            // Unpack it into a tuple of (artist, title)
-            let metadata = unpack_metadata(metadata).await?;
-
-            let playbackstatus: String =
-                get_property(&connection, &mediaplayer_bus, "PlaybackStatus")
-                    .await?
-                    .downcast_ref()?;
-
-            // While we have received the metadata, get the playbackstatus as well to make sure
-            // the output is correct
-            let media = Media::new(
-                metadata.0.unwrap_or_default(),
-                metadata.1.unwrap_or_default(),
-                playbackstatus,
-            );
-
-            // Send the output to Waybar for display
-            media.send(&options.format);
-        }
-
-        // Handle playbackstatus
-        if let Some(playbackstatus) = changed.changed_properties().get("PlaybackStatus") {
-            let playbackstatus: String = playbackstatus.downcast_ref()?;
-
-            // Getting the playbackstatus sometimes still leaves the rest of the metadata
-            // outdated depending on the mediaplayer behavior. So to make sure we're printing the
-            // correct output we grab the rest of the metadata as well.
-            let metadata: Value = get_property(&connection, &mediaplayer_bus, "Metadata").await?;
-            let metadata = unpack_metadata(&metadata).await?;
-
-            let media = Media::new(
-                metadata.0.unwrap_or_default(),
-                metadata.1.unwrap_or_default(),
-                playbackstatus,
-            );
-
-            media.send(&options.format);
+        // Now parse the arguments and finally send the media output to Waybar
+        if let Some(media) = parse_msg_args(&connection, changed, &mediaplayer_bus).await? {
+            media.send(&options.format)
         }
     }
-
     Ok(())
 }
 /// Start a message stream receiving info about change of name owners, e.g. mediaplayers closing
@@ -278,7 +277,7 @@ async fn name_owner_changed_stream(
 
                 // Check if the mediaplayer matches, either via glob or direct match
                 let matched_player = if glob {
-                    matches_pattern(&mediaplayer, name)
+                    matches_glob_pattern(mediaplayer, name)
                 } else {
                     name == mediaplayer
                 };
