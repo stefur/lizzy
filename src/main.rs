@@ -41,14 +41,14 @@ fn matches_glob_pattern(mediaplayer: &str, other: &str) -> bool {
 /// Helper function to unpack the media metadata properties artist and title
 async fn unpack_metadata(
     metadata: &Value<'_>,
-) -> Result<(Option<String>, Option<String>), Box<dyn Error + Send + Sync>> {
+) -> Result<(String, String), Box<dyn Error + Send + Sync>> {
     let dict: Dict = metadata.downcast_ref()?;
-    let title: Option<String> = dict.get(&"xesam:title")?;
+    let title: String = dict.get(&"xesam:title")?.unwrap_or_default();
     let artist_array: Option<Array> = dict.get(&"xesam:artist")?;
     // Get the first artist in the artist array
-    let artist: Option<String> = match artist_array {
-        Some(array) => array.get(0)?,
-        None => None,
+    let artist: String = match artist_array {
+        Some(array) => array.get(0)?.unwrap_or_default(),
+        None => String::default(),
     };
 
     Ok((artist, title))
@@ -100,47 +100,42 @@ async fn parse_msg_args(
     connection: &Connection,
     args: PropertiesChangedArgs<'_>,
     mediaplayer_bus: &str,
-) -> Result<Option<Media>, Box<dyn Error + Send + Sync>> {
+) -> Result<Media, Box<dyn Error + Send + Sync>> {
     // While we can receive metadata or playbackstatus, we never get them both.
     // This is why we for each instance get the missing information to make sure
     // we produce correct output.
 
     // Handle metadata
-    let (metadata, playbackstatus) = match (
-        args.changed_properties().get("Metadata"),
-        args.changed_properties().get("PlaybackStatus"),
-    ) {
-        (Some(metadata_value), _) => {
-            // Unpack metadata
-            let metadata = unpack_metadata(metadata_value).await?;
-            // Get the playbackstatus as well
-            let playbackstatus: String =
-                get_property(connection, mediaplayer_bus, "PlaybackStatus")
-                    .await?
-                    .downcast_ref()?;
 
-            (metadata, playbackstatus)
-        }
-        (_, Some(playbackstatus_value)) => {
-            // Get playback status
-            let playbackstatus: String = playbackstatus_value.downcast_ref()?;
-            // And then fetch the metadata
-            let metadata: Value = get_property(connection, mediaplayer_bus, "Metadata").await?;
-            let metadata = unpack_metadata(&metadata).await?;
+    if let Some(metadata) = args.changed_properties().get("Metadata") {
+        // Unpack metadata
+        let metadata = unpack_metadata(metadata).await?;
+        // Get the playbackstatus as well
+        let playbackstatus: Result<Value<'_>, Box<dyn Error + Send + Sync>> =
+            get_property(connection, mediaplayer_bus, "PlaybackStatus").await;
 
-            (metadata, playbackstatus)
-        }
-        // If for whatever reason no key matches, we just return None, that's fine
-        _ => return Ok(None),
+        let playbackstatus: String = match playbackstatus {
+            Ok(value) => value.downcast_ref()?,
+            Err(_) => String::default(),
+        };
+
+        return Ok(Media::new(metadata.0, metadata.1, playbackstatus));
     };
 
-    // Assuming we got what we needed we create an instance of media and return it
-    let media = Media::new(
-        metadata.0.unwrap_or_else(String::default),
-        metadata.1.unwrap_or_else(String::default),
-        playbackstatus,
-    );
-    Ok(Some(media))
+    if let Some(playbackstatus) = args.changed_properties().get("PlaybackStatus") {
+        // Get playback status
+        let playbackstatus: String = playbackstatus.downcast_ref()?;
+        // And then fetch the metadata
+        let metadata: Result<Value<'_>, Box<dyn Error + Send + Sync>> =
+            get_property(connection, mediaplayer_bus, "Metadata").await;
+        let metadata = match metadata {
+            Ok(metadata) => unpack_metadata(&metadata).await?,
+            Err(_) => (String::default(), String::default()),
+        };
+
+        return Ok(Media::new(metadata.0, metadata.1, playbackstatus));
+    };
+    Ok(Media::default())
 }
 
 /// Calls a method on the interface to play or pause what is currently playing
@@ -240,21 +235,15 @@ async fn property_changes_stream(
                     // But first check if we should toggle the playback status
                     if options.autotoggle {
                         // If we should toggle the playback, we get the playbackstatus reported from the other mediaplayer
-                        if let Some(media) =
-                            parse_msg_args(&connection, changed, &sender_busname).await?
-                        {
-                            // And we send the reverse method call to our mediaplayer
-                            match media.playbackstatus.as_str() {
-                                "Playing" => {
-                                    toggle_playback(&connection, &mediaplayer_busname, "Pause")
-                                        .await?
-                                }
-                                "Paused" => {
-                                    toggle_playback(&connection, &mediaplayer_busname, "Play")
-                                        .await?
-                                }
-                                _ => (),
+
+                        let media = parse_msg_args(&connection, changed, &sender_busname).await?;
+
+                        // And we send the reverse method call to our mediaplayer
+                        match media.playbackstatus.as_str() {
+                            "Playing" => {
+                                toggle_playback(&connection, &mediaplayer_busname, "Pause").await?
                             }
+                            _ => toggle_playback(&connection, &mediaplayer_busname, "Play").await?,
                         }
                     }
                     // Since this is not a mediaplayer we care about, just go next and don't unpack any contents
@@ -267,9 +256,8 @@ async fn property_changes_stream(
         }
 
         // Now parse the arguments and finally send the media output to Waybar
-        if let Some(media) = parse_msg_args(&connection, changed, &mediaplayer_busname).await? {
-            media.send(&options.format)
-        }
+        let media = parse_msg_args(&connection, changed, &mediaplayer_busname).await?;
+        media.send(&options.format)
     }
     Ok(())
 }
@@ -309,6 +297,41 @@ async fn name_owner_changed_stream(
                 if change.old_owner().is_some() && change.new_owner().is_none() && matched_player {
                     // Print empty line and abort the property task if the mediaplayer closes
                     println!();
+                }
+
+                // Firefox sometimes appear as a new name owner, with content playing (usually a stream) but does not
+                // send any message about it. Therefore we check all non matching players playback status as they appear
+                // and toggle playback accordingly.
+                if change.old_owner().is_none()
+                    && change.new_owner().is_some()
+                    && !matched_player
+                    && options.autotoggle
+                {
+                    // Figure out the correct busname to call
+                    let mediaplayer_busname = {
+                        if options.glob {
+                            get_first_match(&dbus_proxy, &options.mediaplayer).await?
+                        } else {
+                            Some(BusName::try_from(format!(
+                                "org.mpris.MediaPlayer2.{}",
+                                options.mediaplayer.as_str()
+                            ))?)
+                        }
+                    };
+
+                    // Then send a command to pause our mediaplayer. Any other status we just ignore.
+                    if let Some(mediaplayer_busname) = mediaplayer_busname {
+                        let playbackstatus: String =
+                            get_property(&connection, &bus_name, "PlaybackStatus")
+                                .await?
+                                .downcast_ref()?;
+                        match playbackstatus.as_str() {
+                            "Playing" => {
+                                toggle_playback(&connection, &mediaplayer_busname, "Pause").await?
+                            }
+                            _ => (),
+                        }
+                    }
                 }
             }
         }

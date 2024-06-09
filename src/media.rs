@@ -4,6 +4,16 @@ pub struct Media {
     pub playbackstatus: String,
 }
 
+impl Default for Media {
+    fn default() -> Self {
+        Self {
+            artist: String::default(),
+            title: String::default(),
+            playbackstatus: String::default(),
+        }
+    }
+}
+
 impl Media {
     // Construct a new instance of media output
     pub fn new(artist: String, title: String, playbackstatus: String) -> Self {
