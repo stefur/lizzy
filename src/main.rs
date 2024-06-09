@@ -55,10 +55,10 @@ async fn unpack_metadata(
 }
 
 /// Get the first name owner that matches the glob pattern
-async fn get_first_match(
-    proxy: &DBusProxy<'_>,
-    glob_pattern: &str,
-) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
+async fn get_first_match<'a>(
+    proxy: &'a DBusProxy<'a>,
+    glob_pattern: &'a str,
+) -> Result<Option<BusName<'a>>, Box<dyn Error + Send + Sync>> {
     let all_names: Vec<OwnedBusName> = proxy.list_names().await?;
 
     let first_matching_name = all_names.iter().find(|name| {
@@ -74,7 +74,7 @@ async fn get_first_match(
         }
     });
 
-    Ok(first_matching_name.map(|name| name.inner().to_string()))
+    Ok(first_matching_name.map(|name| name.inner().to_owned()))
 }
 
 /// Get either metadata or playback status from the MPRIS properties
@@ -163,9 +163,7 @@ async fn toggle_playback(
 /// Start a message stream to listen for property changes
 async fn property_changes_stream(
     connection: Connection,
-    glob: bool,
     options: &Arguments,
-    mut mediaplayer_bus: String,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     // Define a rule to catch properties changed
     let rule: MatchRule = MatchRule::builder()
@@ -178,6 +176,11 @@ async fn property_changes_stream(
     // A proxy to get name owners
     let dbus_proxy = DBusProxy::new(&connection).await?;
 
+    // The mediaplayer bus name, constructed by using the mediaplayer defined by the user, but will be updated
+    // in case of glob
+    let mut mediaplayer_busname =
+        BusName::try_from(format!("org.mpris.MediaPlayer2.{}", options.mediaplayer))?;
+
     let mut property_stream = MessageStream::for_match_rule(
         rule,
         &connection,
@@ -189,11 +192,11 @@ async fn property_changes_stream(
     // Start catching messages on the stream
     while let Some(Ok(msg)) = property_stream.next().await {
         // If globbing mediaplayers we try to get the first match, but if there is none we skip
-        if glob {
+        if options.glob {
             match get_first_match(&dbus_proxy, &options.mediaplayer).await {
-                Ok(Some(matching_player)) => {
+                Ok(Some(matching_busname)) => {
                     // We update the mediaplayer with the match
-                    mediaplayer_bus = matching_player;
+                    mediaplayer_busname = matching_busname;
                 }
                 _ => {
                     // Skip if no match
@@ -212,38 +215,43 @@ async fn property_changes_stream(
         // TODO Mediaplayers sometimes send more than one message, which is annoying but does not
         // affect the output. Maybe some kind guard would be useful at some point.
 
-        // Get the header of the message so that we can check ID of the sender
-        let header = properties.message().header();
-        let sender = header
+        // Get the sender busname of the message so that we can check the unique ID
+        let sender = properties
+            .message()
+            .header()
             .sender()
             .expect("A message should always have a sender")
-            .as_str();
+            .to_owned();
+
+        let sender_busname = BusName::try_from(sender)?;
 
         // Check if we should listen to all mediaplayers. If so we modify the mediaplayer_bus to whatever is incoming
         // and proceed to unpacking the contents
         if options.mediaplayer.is_empty() {
-            sender.clone_into(&mut mediaplayer_bus);
+            sender_busname.clone_into(&mut mediaplayer_busname);
         } else {
-            // Create a BusName to get the ID from
-            let bus_name = BusName::try_from(mediaplayer_bus.to_owned())?;
-
             // Getting the name owner errors if our mediaplayer is not open...
-            if let Ok(mediaplayer_id) = dbus_proxy.get_name_owner(bus_name).await {
+            if let Ok(mediaplayer_id) = dbus_proxy
+                .get_name_owner(mediaplayer_busname.as_ref())
+                .await
+            {
                 // If the sender is not a mediaplayer we're after, skip it
-                if sender != mediaplayer_id.as_str() {
+                if sender_busname != mediaplayer_id.as_str() {
                     // But first check if we should toggle the playback status
                     if options.autotoggle {
                         // If we should toggle the playback, we get the playbackstatus reported from the other mediaplayer
                         if let Some(media) =
-                            parse_msg_args(&connection, changed, &mediaplayer_bus).await?
+                            parse_msg_args(&connection, changed, &sender_busname).await?
                         {
                             // And we send the reverse method call to our mediaplayer
                             match media.playbackstatus.as_str() {
                                 "Playing" => {
-                                    toggle_playback(&connection, &mediaplayer_bus, "Pause").await?
+                                    toggle_playback(&connection, &mediaplayer_busname, "Pause")
+                                        .await?
                                 }
                                 "Paused" => {
-                                    toggle_playback(&connection, &mediaplayer_bus, "Play").await?
+                                    toggle_playback(&connection, &mediaplayer_busname, "Play")
+                                        .await?
                                 }
                                 _ => (),
                             }
@@ -259,7 +267,7 @@ async fn property_changes_stream(
         }
 
         // Now parse the arguments and finally send the media output to Waybar
-        if let Some(media) = parse_msg_args(&connection, changed, &mediaplayer_bus).await? {
+        if let Some(media) = parse_msg_args(&connection, changed, &mediaplayer_busname).await? {
             media.send(&options.format)
         }
     }
@@ -268,8 +276,7 @@ async fn property_changes_stream(
 /// Start a message stream receiving info about change of name owners, e.g. mediaplayers closing
 async fn name_owner_changed_stream(
     connection: Connection,
-    mediaplayer: &String,
-    glob: bool,
+    options: &Arguments,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let dbus_proxy = DBusProxy::new(&connection).await?;
 
@@ -288,10 +295,10 @@ async fn name_owner_changed_stream(
                 let name = bus_name.trim_start_matches("org.mpris.MediaPlayer2.");
 
                 // Check if the mediaplayer matches, either via glob or direct match
-                let matched_player = if glob {
-                    matches_glob_pattern(mediaplayer, name)
+                let matched_player = if options.glob {
+                    matches_glob_pattern(&options.mediaplayer, name)
                 } else {
-                    name == mediaplayer
+                    name == options.mediaplayer
                 };
 
                 // A typical message when a mediaplayer closes contains info about the old owner
@@ -320,28 +327,15 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     });
 
-    // Check if theres a glob pattern to match
-    let glob: bool = OPTIONS.mediaplayer.contains('*');
-
     // Connect to the session bus
     let connection = Connection::session().await?;
 
-    // The mediaplayer bus name, constructed by using the mediaplayer defined by the user
-    let mediaplayer_bus = format!("org.mpris.MediaPlayer2.{}", OPTIONS.mediaplayer);
-
     // Set up two streams to handle properties as well as opening/closing mediaplayers
-    let property_changes_stream = tokio::spawn(property_changes_stream(
-        connection.clone(),
-        glob,
-        &OPTIONS,
-        mediaplayer_bus,
-    ));
+    let property_changes_stream =
+        tokio::spawn(property_changes_stream(connection.clone(), &OPTIONS));
 
-    let name_owner_changed_stream = tokio::spawn(name_owner_changed_stream(
-        connection.clone(),
-        &OPTIONS.mediaplayer,
-        glob,
-    ));
+    let name_owner_changed_stream =
+        tokio::spawn(name_owner_changed_stream(connection.clone(), &OPTIONS));
 
     let _ = name_owner_changed_stream.await;
     let _ = property_changes_stream.await;
