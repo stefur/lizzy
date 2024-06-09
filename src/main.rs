@@ -330,14 +330,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Connect to the session bus
     let connection = Connection::session().await?;
 
-    // Set up two streams to handle properties as well as opening/closing mediaplayers
+    // Set up streams to handle properties as well as opening/closing mediaplayers
     let property_changes_stream =
         tokio::spawn(property_changes_stream(connection.clone(), &OPTIONS));
 
-    let name_owner_changed_stream =
-        tokio::spawn(name_owner_changed_stream(connection.clone(), &OPTIONS));
+    // Only set up a name owner changed stream if user has specified a mediaplayer
+    if !OPTIONS.mediaplayer.is_empty() {
+        let name_owner_changed_stream =
+            tokio::spawn(name_owner_changed_stream(connection.clone(), &OPTIONS));
 
-    let _ = name_owner_changed_stream.await;
+        let _ = name_owner_changed_stream.await;
+    }
+
     let _ = property_changes_stream.await;
 
     Ok(())
