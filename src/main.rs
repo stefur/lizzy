@@ -12,7 +12,6 @@ use zbus::zvariant::Array;
 use zbus::zvariant::Dict;
 use zbus::zvariant::Value;
 use zbus::Connection;
-
 use zbus::MatchRule;
 use zbus::MessageStream;
 use zbus::Proxy;
@@ -217,33 +216,43 @@ async fn property_changes_stream(
         let header = properties.message().header();
         let sender = header.sender().unwrap().as_str();
 
-        // Check if we should listen to all mediaplayers, then we modify the mediaplayer_bus to whatever is incoming
+        // Check if we should listen to all mediaplayers. If so we modify the mediaplayer_bus to whatever is incoming
+        // and proceed to unpacking the contents
         if options.mediaplayer.is_empty() {
             sender.clone_into(&mut mediaplayer_bus);
-        }
+        } else {
+            // Create a BusName to get the ID from
+            let bus_name = BusName::try_from(mediaplayer_bus.to_owned())?;
 
-        // Create a BusName to get the ID from
-        let bus_name = BusName::try_from(mediaplayer_bus.to_owned())?;
-        let mediaplayer_id = dbus_proxy.get_name_owner(bus_name).await?;
-
-        // If the sender is not a mediaplayer we're after, skip it
-        if sender != mediaplayer_id.as_str() {
-            // But first check if we should toggle the playback status
-            if options.autotoggle {
-                // If we should toggle the playback, we get the playbackstatus reported from the other mediaplayer
-                if let Some(media) = parse_msg_args(&connection, changed, &mediaplayer_bus).await? {
-                    // And we send the reverse method call to our mediaplayer
-                    match media.playbackstatus.as_str() {
-                        "Playing" => {
-                            toggle_playback(&connection, &mediaplayer_bus, "Pause").await?
+            // Getting the name owner errors if our mediaplayer is not open...
+            if let Ok(mediaplayer_id) = dbus_proxy.get_name_owner(bus_name).await {
+                // If the sender is not a mediaplayer we're after, skip it
+                if sender != mediaplayer_id.as_str() {
+                    // But first check if we should toggle the playback status
+                    if options.autotoggle {
+                        // If we should toggle the playback, we get the playbackstatus reported from the other mediaplayer
+                        if let Some(media) =
+                            parse_msg_args(&connection, changed, &mediaplayer_bus).await?
+                        {
+                            // And we send the reverse method call to our mediaplayer
+                            match media.playbackstatus.as_str() {
+                                "Playing" => {
+                                    toggle_playback(&connection, &mediaplayer_bus, "Pause").await?
+                                }
+                                "Paused" => {
+                                    toggle_playback(&connection, &mediaplayer_bus, "Play").await?
+                                }
+                                _ => (),
+                            }
                         }
-                        "Paused" => toggle_playback(&connection, &mediaplayer_bus, "Play").await?,
-                        _ => (),
                     }
+                    // Since this is not a mediaplayer we care about, just go next and don't unpack any contents
+                    continue;
                 }
+            } else {
+                // ...so in the case that we fail getting the ID of our mediaplayer we skip
+                continue;
             }
-            // Since this is not a mediaplayer we care about, just go next
-            continue;
         }
 
         // Now parse the arguments and finally send the media output to Waybar
