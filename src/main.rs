@@ -214,7 +214,10 @@ async fn property_changes_stream(
 
         // Get the header of the message so that we can check ID of the sender
         let header = properties.message().header();
-        let sender = header.sender().unwrap().as_str();
+        let sender = header
+            .sender()
+            .expect("A message should always have a sender")
+            .as_str();
 
         // Check if we should listen to all mediaplayers. If so we modify the mediaplayer_bus to whatever is incoming
         // and proceed to unpacking the contents
