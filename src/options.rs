@@ -34,15 +34,15 @@ pub fn parse_args() -> Result<Arguments, pico_args::Error> {
         .unwrap_or_else(String::new);
 
     // Check for glob
-    let glob = mediaplayer.contains("*");
+    let glob = mediaplayer.contains('*');
 
     let args = Arguments {
         format: pargs
             .opt_value_from_str("--format")?
             .unwrap_or(String::from("{{artist}} - {{title}}")),
-        mediaplayer: mediaplayer,
+        mediaplayer,
         autotoggle: pargs.contains("--autotoggle"),
-        glob: glob,
+        glob,
     };
 
     // It's up to the caller what to do with the remaining arguments.

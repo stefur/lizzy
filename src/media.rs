@@ -1,22 +1,16 @@
 pub struct Media {
-    pub artist: String,
-    pub title: String,
-    pub playbackstatus: String,
-}
-
-impl Default for Media {
-    fn default() -> Self {
-        Self {
-            artist: String::default(),
-            title: String::default(),
-            playbackstatus: String::default(),
-        }
-    }
+    pub artist: Option<String>,
+    pub title: Option<String>,
+    pub playbackstatus: Option<String>,
 }
 
 impl Media {
-    // Construct a new instance of media output
-    pub fn new(artist: String, title: String, playbackstatus: String) -> Self {
+    /// Construct a new instance of media output
+    pub fn new(
+        artist: Option<String>,
+        title: Option<String>,
+        playbackstatus: Option<String>,
+    ) -> Self {
         Media {
             artist,
             title,
@@ -26,16 +20,24 @@ impl Media {
 
     /// Send the media output to Waybar
     pub fn send(&self, output_format: &str) {
-        // Construct the output from user defined format and escape ampersands
-        let now_playing = output_format
-            .replace("{{artist}}", &self.artist)
-            .replace("{{title}}", &self.title)
-            .replace('&', "&amp;");
+        // All fields must be some
+        if let Self {
+            artist: Some(artist),
+            title: Some(title),
+            playbackstatus: Some(playbackstatus),
+        } = self
+        {
+            // Construct the output from user defined format and escape ampersands
+            let now_playing = output_format
+                .replace("{{artist}}", artist)
+                .replace("{{title}}", title)
+                .replace('&', "&amp;");
 
-        // Print the output in JSON format to be parsed by Waybar
-        println!(
-            r#"{{"text": "{}", "alt": "{}", "class": "{}"}}"#,
-            now_playing, self.playbackstatus, self.playbackstatus
-        );
+            // Print the output in JSON format to be parsed by Waybar
+            println!(
+                r#"{{"text": "{}", "alt": "{}", "class": "{}"}}"#,
+                now_playing, playbackstatus, playbackstatus
+            );
+        }
     }
 }

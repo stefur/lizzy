@@ -1,7 +1,7 @@
+use anyhow::{Context, Result};
 use media::Media;
 use once_cell::sync::Lazy;
 use options::Arguments;
-use std::error::Error;
 use zbus::export::futures_util::stream::StreamExt;
 use zbus::fdo::DBusProxy;
 use zbus::fdo::PropertiesChanged;
@@ -10,6 +10,7 @@ use zbus::names::BusName;
 use zbus::names::OwnedBusName;
 use zbus::zvariant::Array;
 use zbus::zvariant::Dict;
+use zbus::zvariant::NoneValue;
 use zbus::zvariant::Value;
 use zbus::Connection;
 use zbus::MatchRule;
@@ -17,6 +18,7 @@ use zbus::MessageStream;
 use zbus::Proxy;
 mod media;
 mod options;
+type BoxedError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Simple glob pattern match
 fn matches_glob_pattern(mediaplayer: &str, other: &str) -> bool {
@@ -41,14 +43,22 @@ fn matches_glob_pattern(mediaplayer: &str, other: &str) -> bool {
 /// Helper function to unpack the media metadata properties artist and title
 async fn unpack_metadata(
     metadata: &Value<'_>,
-) -> Result<(String, String), Box<dyn Error + Send + Sync>> {
-    let dict: Dict = metadata.downcast_ref()?;
-    let title: String = dict.get(&"xesam:title")?.unwrap_or_default();
-    let artist_array: Option<Array> = dict.get(&"xesam:artist")?;
+) -> Result<(Option<String>, Option<String>), BoxedError> {
+    let dict: Dict = metadata
+        .downcast_ref()
+        .context("No dictionary of metadata found.")?;
+    let title: Option<String> = dict
+        .get(&"xesam:title")
+        .context("No key for xesam:title found.")?;
+    let artist_array: Option<Array> = dict
+        .get(&"xesam:artist")
+        .context("No key for xesam:artist found.")?;
+
     // Get the first artist in the artist array
-    let artist: String = match artist_array {
-        Some(array) => array.get(0)?.unwrap_or_default(),
-        None => String::default(),
+    let artist: Option<String> = if let Some(array) = artist_array {
+        array.get(0).context("No artist found in array")?
+    } else {
+        None
     };
 
     Ok((artist, title))
@@ -58,7 +68,7 @@ async fn unpack_metadata(
 async fn get_first_match<'a>(
     proxy: &'a DBusProxy<'a>,
     glob_pattern: &'a str,
-) -> Result<Option<BusName<'a>>, Box<dyn Error + Send + Sync>> {
+) -> Result<Option<BusName<'a>>, BoxedError> {
     let all_names: Vec<OwnedBusName> = proxy.list_names().await?;
 
     let first_matching_name = all_names.iter().find(|name| {
@@ -82,7 +92,7 @@ async fn get_property(
     connection: &Connection,
     bus_name: &str,
     property: &str,
-) -> Result<Value<'static>, Box<dyn Error + Send + Sync>> {
+) -> Result<Value<'static>, BoxedError> {
     // Create a proxy to help us get properties
     let proxy = Proxy::new(
         connection,
@@ -100,42 +110,37 @@ async fn parse_msg_args(
     connection: &Connection,
     args: PropertiesChangedArgs<'_>,
     mediaplayer_bus: &str,
-) -> Result<Media, Box<dyn Error + Send + Sync>> {
+) -> Result<Media, BoxedError> {
     // While we can receive metadata or playbackstatus, we never get them both.
     // This is why we for each instance get the missing information to make sure
     // we produce correct output.
 
     // Handle metadata
 
-    if let Some(metadata) = args.changed_properties().get("Metadata") {
-        // Unpack metadata
-        let metadata = unpack_metadata(metadata).await?;
-        // Get the playbackstatus as well
-        let playbackstatus: Result<Value<'_>, Box<dyn Error + Send + Sync>> =
-            get_property(connection, mediaplayer_bus, "PlaybackStatus").await;
+    let mut metadata = (None, None);
+    let mut playbackstatus = None;
 
-        let playbackstatus: String = match playbackstatus {
-            Ok(value) => value.downcast_ref()?,
-            Err(_) => String::default(),
-        };
+    // Check if metadata is present in the changed properties
+    if let Some(metadata_value) = args.changed_properties().get("Metadata") {
+        // Then unpack it
+        metadata = unpack_metadata(metadata_value).await?;
+    } else if let Ok(metadata_value) = get_property(connection, mediaplayer_bus, "Metadata").await {
+        // Otherwise we try to fetch it ourselvesand then unpack it
+        // This can fail which is fine
+        metadata = unpack_metadata(&metadata_value).await?;
+    }
 
-        return Ok(Media::new(metadata.0, metadata.1, playbackstatus));
-    };
+    // Then the same procedure for playbackstatus
+    if let Some(playbackstatus_value) = args.changed_properties().get("PlaybackStatus") {
+        playbackstatus = Some(playbackstatus_value.downcast_ref::<String>()?);
+    } else if let Ok(playbackstatus_value) =
+        get_property(connection, mediaplayer_bus, "PlaybackStatus").await
+    // This can also fail, which is fine
+    {
+        playbackstatus = Some(playbackstatus_value.downcast::<String>()?);
+    }
 
-    if let Some(playbackstatus) = args.changed_properties().get("PlaybackStatus") {
-        // Get playback status
-        let playbackstatus: String = playbackstatus.downcast_ref()?;
-        // And then fetch the metadata
-        let metadata: Result<Value<'_>, Box<dyn Error + Send + Sync>> =
-            get_property(connection, mediaplayer_bus, "Metadata").await;
-        let metadata = match metadata {
-            Ok(metadata) => unpack_metadata(&metadata).await?,
-            Err(_) => (String::default(), String::default()),
-        };
-
-        return Ok(Media::new(metadata.0, metadata.1, playbackstatus));
-    };
-    Ok(Media::default())
+    Ok(Media::new(metadata.0, metadata.1, playbackstatus))
 }
 
 /// Calls a method on the interface to play or pause what is currently playing
@@ -143,7 +148,7 @@ async fn toggle_playback(
     connection: &Connection,
     bus_name: &str,
     cmd: &str,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), BoxedError> {
     // Create a proxy to help us get properties
     let proxy = Proxy::new(
         connection,
@@ -159,7 +164,7 @@ async fn toggle_playback(
 async fn property_changes_stream(
     connection: Connection,
     options: &Arguments,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), BoxedError> {
     // Define a rule to catch properties changed
     let rule: MatchRule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -171,10 +176,14 @@ async fn property_changes_stream(
     // A proxy to get name owners
     let dbus_proxy = DBusProxy::new(&connection).await?;
 
-    // The mediaplayer bus name, constructed by using the mediaplayer defined by the user, but will be updated
-    // in case of glob
-    let mut mediaplayer_busname =
-        BusName::try_from(format!("org.mpris.MediaPlayer2.{}", options.mediaplayer))?;
+    // The mediaplayer bus name, constructed by using the mediaplayer defined by the user, but will be
+    let mut mediaplayer_busname: String = if options.glob {
+        BusName::null_value().to_owned()
+    } else {
+        BusName::try_from(format!("org.mpris.MediaPlayer2.{}", options.mediaplayer))
+            .context("Invalid busname for mediaplayer.")?
+            .to_string()
+    };
 
     let mut property_stream = MessageStream::for_match_rule(
         rule,
@@ -191,7 +200,7 @@ async fn property_changes_stream(
             match get_first_match(&dbus_proxy, &options.mediaplayer).await {
                 Ok(Some(matching_busname)) => {
                     // We update the mediaplayer with the match
-                    mediaplayer_busname = matching_busname;
+                    mediaplayer_busname = matching_busname.to_string();
                 }
                 _ => {
                     // Skip if no match
@@ -218,7 +227,7 @@ async fn property_changes_stream(
             .expect("A message should always have a sender")
             .to_owned();
 
-        let sender_busname = BusName::try_from(sender)?;
+        let sender_busname = BusName::from(sender).to_string();
 
         // Check if we should listen to all mediaplayers. If so we modify the mediaplayer_bus to whatever is incoming
         // and proceed to unpacking the contents
@@ -227,7 +236,7 @@ async fn property_changes_stream(
         } else {
             // Getting the name owner errors if our mediaplayer is not open...
             if let Ok(mediaplayer_id) = dbus_proxy
-                .get_name_owner(mediaplayer_busname.as_ref())
+                .get_name_owner(BusName::try_from(mediaplayer_busname.to_owned())?)
                 .await
             {
                 // If the sender is not a mediaplayer we're after, skip it
@@ -235,15 +244,20 @@ async fn property_changes_stream(
                     // But first check if we should toggle the playback status
                     if options.autotoggle {
                         // If we should toggle the playback, we get the playbackstatus reported from the other mediaplayer
-
                         let media = parse_msg_args(&connection, changed, &sender_busname).await?;
 
-                        // And we send the reverse method call to our mediaplayer
-                        match media.playbackstatus.as_str() {
-                            "Playing" => {
-                                toggle_playback(&connection, &mediaplayer_busname, "Pause").await?
+                        if let Some(playbackstatus) = media.playbackstatus {
+                            // And we send the reverse method call to our mediaplayer
+                            match playbackstatus.as_str() {
+                                "Playing" => {
+                                    toggle_playback(&connection, &mediaplayer_busname, "Pause")
+                                        .await?
+                                }
+                                _ => {
+                                    toggle_playback(&connection, &mediaplayer_busname, "Play")
+                                        .await?
+                                }
                             }
-                            _ => toggle_playback(&connection, &mediaplayer_busname, "Play").await?,
                         }
                     }
                     // Since this is not a mediaplayer we care about, just go next and don't unpack any contents
@@ -265,7 +279,7 @@ async fn property_changes_stream(
 async fn name_owner_changed_stream(
     connection: Connection,
     options: &Arguments,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), BoxedError> {
     let dbus_proxy = DBusProxy::new(&connection).await?;
 
     // Define a rule to catch properties changed
@@ -310,7 +324,14 @@ async fn name_owner_changed_stream(
                     // Figure out the correct busname to call
                     let mediaplayer_busname = {
                         if options.glob {
-                            get_first_match(&dbus_proxy, &options.mediaplayer).await?
+                            if let Ok(matched) =
+                                get_first_match(&dbus_proxy, &options.mediaplayer).await
+                            {
+                                matched
+                            } else {
+                                // This can fail, in that case we skip
+                                continue;
+                            }
                         } else {
                             Some(BusName::try_from(format!(
                                 "org.mpris.MediaPlayer2.{}",
@@ -322,14 +343,11 @@ async fn name_owner_changed_stream(
                     // Then send a command to pause our mediaplayer. Any other status we just ignore.
                     if let Some(mediaplayer_busname) = mediaplayer_busname {
                         let playbackstatus: String =
-                            get_property(&connection, &bus_name, "PlaybackStatus")
+                            get_property(&connection, bus_name.as_str(), "PlaybackStatus")
                                 .await?
                                 .downcast_ref()?;
-                        match playbackstatus.as_str() {
-                            "Playing" => {
-                                toggle_playback(&connection, &mediaplayer_busname, "Pause").await?
-                            }
-                            _ => (),
+                        if playbackstatus.as_str() == "Playing" {
+                            toggle_playback(&connection, &mediaplayer_busname, "Pause").await?
                         }
                     }
                 }
@@ -340,7 +358,7 @@ async fn name_owner_changed_stream(
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn main() -> Result<(), BoxedError> {
     // Parse the options supplied by the user
     static OPTIONS: Lazy<Arguments> = Lazy::new(|| match options::parse_args() {
         Ok(value) => value,
@@ -358,14 +376,27 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         tokio::spawn(property_changes_stream(connection.clone(), &OPTIONS));
 
     // Only set up a name owner changed stream if user has specified a mediaplayer
-    if !OPTIONS.mediaplayer.is_empty() {
-        let name_owner_changed_stream =
-            tokio::spawn(name_owner_changed_stream(connection.clone(), &OPTIONS));
+    let name_owner_changed_stream = if !OPTIONS.mediaplayer.is_empty() {
+        Some(tokio::spawn(name_owner_changed_stream(
+            connection.clone(),
+            &OPTIONS,
+        )))
+    } else {
+        None
+    };
 
-        let _ = name_owner_changed_stream.await;
+    // Await the tasks
+    match name_owner_changed_stream {
+        Some(stream) => {
+            let (property_changes_result, name_owner_result) =
+                tokio::try_join!(property_changes_stream, stream)?;
+            property_changes_result?;
+            name_owner_result?;
+        }
+        None => {
+            property_changes_stream.await??;
+        }
     }
-
-    let _ = property_changes_stream.await;
 
     Ok(())
 }
