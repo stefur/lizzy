@@ -189,7 +189,7 @@ async fn property_changes_stream(
         rule,
         &connection,
         // No big queue needed here
-        Some(1),
+        Some(10),
     )
     .await?;
 
