@@ -15,6 +15,7 @@ pub struct Arguments {
     pub format: String,
     pub mediaplayer: String,
     pub autotoggle: bool,
+    pub glob: bool,
 }
 
 /// Get the user arguments
@@ -27,14 +28,21 @@ pub fn parse_args() -> Result<Arguments, pico_args::Error> {
         std::process::exit(0);
     }
 
+    // Extract mediaplayer first to use it for glob determination
+    let mediaplayer: String = pargs
+        .opt_value_from_str("--mediaplayer")?
+        .unwrap_or_else(String::new);
+
+    // Check for glob
+    let glob = mediaplayer.contains('*');
+
     let args = Arguments {
         format: pargs
             .opt_value_from_str("--format")?
             .unwrap_or(String::from("{{artist}} - {{title}}")),
-        mediaplayer: pargs
-            .opt_value_from_str("--mediaplayer")?
-            .unwrap_or(String::new()),
+        mediaplayer,
         autotoggle: pargs.contains("--autotoggle"),
+        glob,
     };
 
     // It's up to the caller what to do with the remaining arguments.

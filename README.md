@@ -3,7 +3,8 @@
 Lizzy is a simple and small app that lets [Waybar](https://github.com/Alexays/Waybar) display what song or media is playing by listening to DBus signals instead of polling.
   
 ## Features
-- Customizable output format, including colors (see Usage below)
+- Customizable output format (see Usage below)
+- Use glob patterns to catch mediaplayers with varying names, such as Firefox
 - Support for any [MPRIS](https://wiki.archlinux.org/title/MPRIS) mediaplayer of preference
 - Automatic pause/resume when other media content begins/stops playing (ex. YouTube videos)
 - Clearing of output when mediaplayer is closed
@@ -44,7 +45,7 @@ Currently the following options can be used to customize the output of lizzy.
 | Flag | Default value | Description |
 | --- | --- | --- |
 | `--format` | "{{artist}} - {{title}}" | Format of output, using handlebar tags. |
-| `--mediaplayer`| None | Mediaplayer interface that lizzy should listen to. Usually the name of the mediaplayer. Blank means listening to all mediaplayers. |
+| `--mediaplayer`| None | Mediaplayer interface that lizzy should listen to. Usually the name of the mediaplayer. Simple glob patterns with `*` are possible. For example `firefox*` to capture output of any mediaplayer with `firefox` as the prefix. Blank means listening to all mediaplayers. |
 | `--autotoggle` | False | Include this flag to automatically pause/resume the mediaplayer if other media content playing is detected (for example a YouTube video) |
 
 ## Example
