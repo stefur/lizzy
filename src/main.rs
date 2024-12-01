@@ -61,7 +61,47 @@ async fn unpack_metadata(
         None
     };
 
+    let title = match title {
+        Some(possible_bad_title) => Some(escape_special_characters(possible_bad_title.as_str())),
+        None => title,
+    };
+
+    let artist = match artist {
+        Some(possible_bad_artist) => Some(escape_special_characters(possible_bad_artist.as_str())),
+        None => artist,
+    };
+
     Ok((artist, title))
+}
+
+// credit for this function goes to reddit user: redartedreddit
+// https://www.reddit.com/r/rust/comments/i4bg0q/how_to_escape_strings_in_json_for_example_from/
+/// returns a copy of the input buffer. characters considered special in json are escaped such that they dont effect parsers
+fn escape_special_characters(src: &str) -> String {
+    use std::fmt::Write;
+    let mut escaped = String::with_capacity(src.len());
+    let mut utf16_buf = [0u16; 2];
+    for c in src.chars() {
+        match c {
+            // pretty sure this is the only escape actually needed, but for completeness i kept the rest
+            '"' => escaped += "\\\"",   // Double Quote
+            '\\' => escaped += "\\",    // Backslash
+            '\t' => escaped += "\\t",   // Tab
+            '\x08' => escaped += "\\b", // Backspace
+            '\x0c' => escaped += "\\f", // Form Feed
+            '\n' => escaped += "\\n",   // Newline
+            '\r' => escaped += "\\r",   // Carriage Return
+            // if ascii its safe for json output
+            c if c.is_ascii_graphic() => escaped.push(c),
+            c => {
+                let encoded = c.encode_utf16(&mut utf16_buf);
+                for utf16 in encoded {
+                    write!(&mut escaped, "\\u{:04X}", utf16).unwrap();
+                }
+            }
+        }
+    }
+    escaped
 }
 
 /// Get the first name owner that matches the glob pattern
