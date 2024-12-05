@@ -176,8 +176,8 @@ async fn property_changes_stream(
     // A proxy to get name owners
     let dbus_proxy = DBusProxy::new(&connection).await?;
 
-    // The mediaplayer bus name, constructed by using the mediaplayer defined by the user, but will be
-    let mut mediaplayer_busname: String = if options.glob {
+    // The mediaplayer bus name, constructed by using the mediaplayer defined by the user, but will be null if glob or left undefined
+    let mut mediaplayer_busname: String = if options.glob | options.mediaplayer.is_empty() {
         BusName::null_value().to_owned()
     } else {
         BusName::try_from(format!("org.mpris.MediaPlayer2.{}", options.mediaplayer))
