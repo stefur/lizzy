@@ -31,11 +31,13 @@ Add a custom module to your Waybar config, something like:
       "Playing": "󰐊",
       "Paused": "󰏤"
     },
-    "max-length": 45
+    "max-length": 45,
+    "tooltip": false,
+    "escape": true
 }
 ```
 
-Add whatever flags you want to the command in `exec`, for example something like: `"exec": "lizzy --format '{{title}}: {{artist}}' --autotoggle"`
+Add whatever flags you want to the command in `exec`, for example: `"exec": "lizzy --format '{{title}}: {{artist}}' --autotoggle"`
 
 Don't forget to add the module to your bar!
 

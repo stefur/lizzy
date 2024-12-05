@@ -1,3 +1,4 @@
+use serde_json::json;
 pub struct Media {
     pub artist: Option<String>,
     pub title: Option<String>,
@@ -30,14 +31,16 @@ impl Media {
             // Construct the output from user defined format and escape ampersands
             let now_playing = output_format
                 .replace("{{artist}}", artist)
-                .replace("{{title}}", title)
-                .replace('&', "&amp;");
+                .replace("{{title}}", title);
 
-            // Print the output in JSON format to be parsed by Waybar
-            println!(
-                r#"{{"text": "{}", "alt": "{}", "class": "{}"}}"#,
-                now_playing, playbackstatus, playbackstatus
-            );
+            match serde_json::to_string(&json!({
+                "text": now_playing,
+                "alt": playbackstatus,
+                "class": playbackstatus,
+            })) {
+                Ok(json_string) => println!("{}", json_string),
+                Err(e) => eprintln!("Failed to serialize JSON: {}", e),
+            }
         }
     }
 }
