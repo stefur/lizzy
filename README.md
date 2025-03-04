@@ -24,7 +24,7 @@ Add a custom module to your Waybar config, something like:
 
 ```json
 "custom/lizzy": {
-    "format": "{icon} {}",
+    "format": "{icon} {text}",
     "exec": "lizzy",
     "return-type": "json",
     "format-icons": {
