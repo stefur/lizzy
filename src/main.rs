@@ -292,8 +292,8 @@ async fn name_owner_changed_stream(
             .expect("Unpacking the name owner change failed.");
 
         // Only care about the human readable names that contains MPRIS players
-        if let BusName::WellKnown(bus_name) = change.name() {
-            if bus_name.contains("org.mpris.MediaPlayer2.") {
+        if let BusName::WellKnown(bus_name) = change.name()
+            && bus_name.contains("org.mpris.MediaPlayer2.") {
                 let name = bus_name.trim_start_matches("org.mpris.MediaPlayer2.");
 
                 // Check if the mediaplayer matches, either via glob or direct match
@@ -352,7 +352,6 @@ async fn name_owner_changed_stream(
                     }
                 }
             }
-        }
     }
     Ok(())
 }
