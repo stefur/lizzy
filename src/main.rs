@@ -293,65 +293,66 @@ async fn name_owner_changed_stream(
 
         // Only care about the human readable names that contains MPRIS players
         if let BusName::WellKnown(bus_name) = change.name()
-            && bus_name.contains("org.mpris.MediaPlayer2.") {
-                let name = bus_name.trim_start_matches("org.mpris.MediaPlayer2.");
+            && bus_name.contains("org.mpris.MediaPlayer2.")
+        {
+            let name = bus_name.trim_start_matches("org.mpris.MediaPlayer2.");
 
-                // Check if the mediaplayer matches, either via glob or direct match
-                let matched_player = if options.glob {
-                    matches_glob_pattern(&options.mediaplayer, name)
-                } else {
-                    name == options.mediaplayer
+            // Check if the mediaplayer matches, either via glob or direct match
+            let matched_player = if options.glob {
+                matches_glob_pattern(&options.mediaplayer, name)
+            } else {
+                name == options.mediaplayer
+            };
+
+            // A typical message when a mediaplayer closes contains info about the old owner
+            // but there is no no new owner, and it should match a player we're interested in.
+
+            // TODO This means that we never clear output if here is no mediaplayer specified,
+            // but maybe we should clear it either way?
+            if change.old_owner().is_some() && change.new_owner().is_none() && matched_player {
+                // Print empty line and abort the property task if the mediaplayer closes
+                println!();
+            }
+
+            // Firefox sometimes appear as a new name owner, with content playing (usually a stream) but does not
+            // send any message about it. Therefore we check all non matching players playback status as they appear
+            // and toggle playback accordingly.
+            if change.old_owner().is_none()
+                && change.new_owner().is_some()
+                && !matched_player
+                && options.autotoggle
+            {
+                // Figure out the correct busname to call
+                let mediaplayer_busname = {
+                    if options.glob {
+                        if let Ok(matched) =
+                            get_first_match(&dbus_proxy, &options.mediaplayer).await
+                        {
+                            matched
+                        } else {
+                            // This can fail, in that case we skip
+                            continue;
+                        }
+                    } else {
+                        Some(BusName::try_from(format!(
+                            "org.mpris.MediaPlayer2.{}",
+                            options.mediaplayer.as_str()
+                        ))?)
+                    }
                 };
 
-                // A typical message when a mediaplayer closes contains info about the old owner
-                // but there is no no new owner, and it should match a player we're interested in.
-
-                // TODO This means that we never clear output if here is no mediaplayer specified,
-                // but maybe we should clear it either way?
-                if change.old_owner().is_some() && change.new_owner().is_none() && matched_player {
-                    // Print empty line and abort the property task if the mediaplayer closes
-                    println!();
-                }
-
-                // Firefox sometimes appear as a new name owner, with content playing (usually a stream) but does not
-                // send any message about it. Therefore we check all non matching players playback status as they appear
-                // and toggle playback accordingly.
-                if change.old_owner().is_none()
-                    && change.new_owner().is_some()
-                    && !matched_player
-                    && options.autotoggle
-                {
-                    // Figure out the correct busname to call
-                    let mediaplayer_busname = {
-                        if options.glob {
-                            if let Ok(matched) =
-                                get_first_match(&dbus_proxy, &options.mediaplayer).await
-                            {
-                                matched
-                            } else {
-                                // This can fail, in that case we skip
-                                continue;
-                            }
-                        } else {
-                            Some(BusName::try_from(format!(
-                                "org.mpris.MediaPlayer2.{}",
-                                options.mediaplayer.as_str()
-                            ))?)
-                        }
-                    };
-
-                    // Then send a command to pause our mediaplayer. Any other status we just ignore.
-                    if let Some(mediaplayer_busname) = mediaplayer_busname {
-                        let playbackstatus: String =
-                            get_property(&connection, bus_name.as_str(), "PlaybackStatus")
-                                .await?
-                                .downcast_ref()?;
-                        if playbackstatus.as_str() == "Playing" {
-                            toggle_playback(&connection, &mediaplayer_busname, "Pause").await?
-                        }
+                // Then send a command to pause our mediaplayer. Any other status we just ignore.
+                if let Some(mediaplayer_busname) = mediaplayer_busname {
+                    let playbackstatus: String =
+                        get_property(&connection, bus_name.as_str(), "PlaybackStatus")
+                            .await?
+                            .downcast_ref()?;
+                    if playbackstatus.as_str() == "Playing" {
+                        toggle_playback(&connection, &mediaplayer_busname, "Pause").await?
                     }
                 }
             }
+        }
     }
     Ok(())
 }
