@@ -1,5 +1,7 @@
 # lizzy
 
+[![codeberg](https://img.shields.io/badge/codeberg-repo-blue?logo=codeberg)](https://codeberg.org/stefur/lizzy)
+
 Lizzy is a simple and small app that lets [Waybar](https://github.com/Alexays/Waybar) display what song or media is playing by listening to DBus signals instead of polling.
   
 ## Features
